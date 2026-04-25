@@ -36,6 +36,8 @@ Available Models:
     - :class:`Fastflow`: Fast Flow
     - :class:`Fre`: Feature Reconstruction Error
     - :class:`Ganomaly`: Generative Adversarial Networks
+    - :class:`InpFormer`: CVPR 2025 Intrinsic Normal Prototype
+    - :class:`LiMR`: Lightweight Masked Reconstruction for Anomaly Detection
     - :class:`Padim`: Patch Distribution Modeling
     - :class:`Patchcore`: Patch Core
     - :class:`ReverseDistillation`: Reverse Knowledge Distillation
@@ -60,6 +62,8 @@ from .efficient_ad import EfficientAd
 from .fastflow import Fastflow
 from .fre import Fre
 from .ganomaly import Ganomaly
+from .inp_former import INP_Former
+from .limr import LiMR
 from .padim import Padim
 from .patchcore import Patchcore
 from .reverse_distillation import ReverseDistillation
@@ -84,6 +88,8 @@ __all__ = [
     "Fastflow",
     "Fre",
     "Ganomaly",
+    "INP_Former",
+    "LiMR",
     "Padim",
     "Patchcore",
     "ReverseDistillation",
