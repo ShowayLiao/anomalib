@@ -1,0 +1,17 @@
+model:
+  class_path: anomalib.models.INP_Former
+  init_args:
+    encoder_name: dinov2reg_vit_base_14
+    inp_num: 6
+    bottleneck_dropout: 0.0
+    decoder_depth: 8
+
+# Training configuration
+trainer:
+  max_steps: 5000
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        patience: 20
+        monitor: image_AUROC
+        mode: max
