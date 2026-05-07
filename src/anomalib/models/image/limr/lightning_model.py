@@ -1,17 +1,49 @@
-import torch
-import torch.nn as nn
-from torch.optim.lr_scheduler import CosineAnnealingLR
-from scipy.ndimage import gaussian_filter
-from sklearn.metrics import roc_auc_score
-import numpy as np
+# Copyright (C) 2024-2025 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
 
+"""LiMR: Lightweight Masked Reconstruction for Anomaly Detection.
+
+This module implements the LiMR model for anomaly detection. The model uses a teacher-student
+architecture where a frozen teacher extracts features, and a lightweight student encoder-decoder
+reconstructs masked semantic features. The reconstruction error is used to detect anomalies.
+
+Semantic masking is applied via an independent SemanticMaskModule between frozen
+feature extractor stages and trainable refinement stages, enabling one-shot timm
+weight loading and clean stage-wise freezing.
+
+Example:
+    >>> from anomalib.models import LiMR
+    >>> from anomalib.data import MVTecAD
+    >>> from anomalib.engine import Engine
+
+    >>> datamodule = MVTecAD()
+    >>> model = LiMR(backbone="resnet50", alpha=1.75, mask_ratio=0.4)
+
+    >>> engine = Engine()
+    >>> engine.fit(model=model, datamodule=datamodule)
+"""
+
+from collections.abc import Sequence
+from typing import Any
+
+from lightning.pytorch.utilities.types import STEP_OUTPUT
+from torch import optim
+
+from anomalib import LearningType
+from anomalib.data import Batch
+from anomalib.metrics import Evaluator
 from anomalib.models.components import AnomalibModule
+from anomalib.post_processing import PostProcessor
+from anomalib.pre_processing import PreProcessor
+from anomalib.visualization import Visualizer
 
+from .components.losses import LiMRLoss
 from .torch_model import LiMRModel
-from .components.losses import LiMRLoss, cal_anomaly_map
 
 
-class WarmupCosineScheduler(CosineAnnealingLR):
+class WarmupCosineScheduler(optim.lr_scheduler.CosineAnnealingLR):
+    """Cosine annealing LR scheduler with linear warmup."""
+
     def __init__(self, warmup_epochs, **kwargs):
         self.warmup_epochs = warmup_epochs
         super().__init__(**kwargs)
@@ -27,29 +59,80 @@ class WarmupCosineScheduler(CosineAnnealingLR):
 
 
 class LiMR(AnomalibModule):
+    """PL Lightning Module for LiMR Algorithm.
+
+    Args:
+        backbone: Backbone of CNN network for teacher.
+            Defaults to ``"resnet50"``.
+        layers_to_extract_from: Layers to extract features from the teacher backbone.
+            Defaults to ``["layer1", "layer2", "layer3"]``.
+        alpha: Width multiplier for the student encoder.
+            Defaults to ``1.0``.
+        mask_ratio: Ratio of patches to mask during training.
+            Defaults to ``0.4``.
+        test_mask_ratio: Ratio of patches to mask during evaluation.
+            Defaults to ``0.0``.
+        scale_factors: Scale factors for feature pyramid.
+            Defaults to ``(4.0, 2.0, 1.0)``.
+        fpn_output_dim: Output dimensions for FPN layers.
+            Defaults to ``None`` (auto-detect from teacher).
+        frozen_stages: Number of encoder stages to freeze (1=stem, 2=stem+stage0,
+            3=stem+stage0+stage1).
+            Defaults to ``3``.
+        load_timm_weights: Whether to load timm pretrained MobileViTv2 weights.
+            Defaults to ``True``.
+        lr: Learning rate.
+            Defaults to ``0.001``.
+        weight_decay: Weight decay for optimizer.
+            Defaults to ``0.05``.
+        warmup_epochs: Number of warmup epochs for LR scheduler.
+            Defaults to ``15``.
+        block_ffn_dropout: Dropout rate for FFN blocks.
+            Defaults to ``0.1``.
+        block_attn_dropout: Dropout rate for attention blocks.
+            Defaults to ``0.0``.
+        pre_processor: Pre-processor for the model.
+            Defaults to ``True``.
+        post_processor: Post-processor instance.
+            Defaults to ``True``.
+        evaluator: Evaluator instance.
+            Defaults to ``True``.
+        visualizer: Visualizer instance.
+            Defaults to ``True``.
+    """
+
     def __init__(
         self,
-        backbone="resnet50",
-        layers_to_extract_from=None,
-        alpha=1.0,
-        mask_ratio=0.75,
-        test_mask_ratio=0.0,
-        scale_factors=None,
-        fpn_output_dim=None,
-        lr=0.001,
-        weight_decay=0.05,
-        warmup_epochs=15,
-        block_ffn_dropout=0.1,
-        block_attn_dropout=0.0,
-    ):
-        super().__init__()
+        backbone: str = "resnet50",
+        layers_to_extract_from: Sequence[str] | None = None,
+        alpha: float = 1.0,
+        mask_ratio: float = 0.4,
+        test_mask_ratio: float = 0.0,
+        scale_factors: tuple[float, ...] | None = None,
+        fpn_output_dim: tuple[int, ...] | None = None,
+        frozen_stages: int = 3,
+        load_timm_weights: bool = True,
+        lr: float = 0.001,
+        weight_decay: float = 0.05,
+        warmup_epochs: int = 15,
+        block_ffn_dropout: float = 0.1,
+        block_attn_dropout: float = 0.0,
+        pre_processor: PreProcessor | bool = True,
+        post_processor: PostProcessor | bool = True,
+        evaluator: Evaluator | bool = True,
+        visualizer: Visualizer | bool = True,
+    ) -> None:
+        super().__init__(
+            pre_processor=pre_processor,
+            post_processor=post_processor,
+            evaluator=evaluator,
+            visualizer=visualizer,
+        )
 
         if layers_to_extract_from is None:
             layers_to_extract_from = ["layer1", "layer2", "layer3"]
         if scale_factors is None:
             scale_factors = (4.0, 2.0, 1.0)
-        if fpn_output_dim is None:
-            fpn_output_dim = (64, 128, 256, 512)
 
         self.backbone = backbone
         self.layers_to_extract_from = layers_to_extract_from
@@ -66,13 +149,30 @@ class LiMR(AnomalibModule):
             backbone=backbone,
             layers_to_extract_from=layers_to_extract_from,
             alpha=alpha,
+            mask_ratio=mask_ratio,
             scale_factors=scale_factors,
             fpn_output_dim=fpn_output_dim,
             block_ffn_dropout=block_ffn_dropout,
             block_attn_dropout=block_attn_dropout,
+            frozen_stages=frozen_stages,
+            load_timm_weights=load_timm_weights,
         )
 
         self.loss = LiMRLoss()
+
+    @property
+    def trainer_arguments(self) -> dict[str, Any]:
+        """Return LiMR trainer arguments."""
+        return {"gradient_clip_val": 0.1, "num_sanity_val_steps": 0}
+
+    @property
+    def learning_type(self) -> LearningType:
+        """Return the learning type of the model.
+
+        Returns:
+            LearningType: Learning type of the model.
+        """
+        return LearningType.ONE_CLASS
 
     def _get_trainable_params(self, weight_decay):
         wd_params = []
@@ -88,42 +188,15 @@ class LiMR(AnomalibModule):
             {"params": no_wd_params, "weight_decay": 0},
         ]
 
-    def training_step(self, batch, *args, **kwargs):
-        x = batch["image"]
+    def configure_optimizers(self) -> dict:
+        """Configure optimizers and LR schedulers.
 
-        teacher_feats, student_feats = self.model.forward_train(x, mask_ratio=self.mask_ratio)
-
-        loss = self.loss(teacher_feats, student_feats)
-
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-
-        return loss
-
-    def validation_step(self, batch, *args, **kwargs):
-        x = batch["image"]
-
-        teacher_feats, student_feats = self.model.forward_eval(x, mask_ratio=self.test_mask_ratio)
-
-        anomaly_maps, _ = cal_anomaly_map(
-            teacher_feats, student_feats,
-            out_size=x.shape[-1],
-            amap_mode="a",
-        )
-
-        for item in range(len(anomaly_maps)):
-            anomaly_maps[item] = gaussian_filter(anomaly_maps[item], sigma=4)
-
-        pred_scores = np.max(anomaly_maps.reshape(anomaly_maps.shape[0], -1), axis=1)
-
-        batch["anomaly_maps"] = torch.from_numpy(anomaly_maps).float()
-        batch["pred_scores"] = torch.from_numpy(pred_scores).float()
-
-        return batch
-
-    def configure_optimizers(self):
+        Returns:
+            dict: Optimizer and LR scheduler configuration.
+        """
         trainable_params = self._get_trainable_params(self.weight_decay)
 
-        optimizer = torch.optim.AdamW(
+        optimizer = optim.AdamW(
             trainable_params,
             lr=self.lr,
             betas=(0.9, 0.95),
@@ -138,3 +211,37 @@ class LiMR(AnomalibModule):
         )
 
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"}}
+
+    def training_step(self, batch: Batch, *args, **kwargs) -> STEP_OUTPUT:
+        """Perform a training step.
+
+        Args:
+            batch: Input batch
+            args: Additional arguments.
+            kwargs: Additional keyword arguments.
+
+        Returns:
+            STEP_OUTPUT: Dictionary containing the loss.
+        """
+        del args, kwargs
+
+        teacher_feats, student_feats = self.model(batch.image, mask_ratio=self.mask_ratio)
+        loss = self.loss(teacher_feats, student_feats)
+        self.log("train_loss", loss, on_epoch=True, prog_bar=True, logger=True)
+        return {"loss": loss}
+
+    def validation_step(self, batch: Batch, *args, **kwargs) -> STEP_OUTPUT:
+        """Perform a validation step.
+
+        Args:
+            batch: Input batch
+            args: Additional arguments.
+            kwargs: Additional keyword arguments.
+
+        Returns:
+            STEP_OUTPUT: Dictionary containing the batch with predictions.
+        """
+        del args, kwargs
+
+        predictions = self.model(batch.image, mask_ratio=self.test_mask_ratio)
+        return batch.update(**predictions._asdict())

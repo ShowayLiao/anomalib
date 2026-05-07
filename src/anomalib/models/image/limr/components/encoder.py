@@ -3,7 +3,20 @@ from typing import Dict, Tuple, Optional
 
 from .base_layers import InvertedResidual
 from .mobilevit_v2_block import MobileViTBlockv2 as Block
-from .model_utils import bound_fn, make_divisible
+from .semantic_mask import SemanticMaskModule
+
+
+def make_divisible(v, divisor=8, min_value=None):
+    if min_value is None:
+        min_value = divisor
+    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+    if new_v < 0.9 * v:
+        new_v += divisor
+    return new_v
+
+
+def bound_fn(min_val, max_val, value):
+    return max(min_val, min(max_val, value))
 
 
 class MobileViTv2(nn.Module):
@@ -145,14 +158,12 @@ class MobileViTv2(nn.Module):
 
         for i in range(num_blocks):
             stride = cfg.get("stride", 1) if i == 0 else 1
-            mask_block = False
 
             layer = InvertedResidual(
                 in_channels=input_channel,
                 out_channels=output_channels,
                 stride=stride,
                 expand_ratio=expand_ratio,
-                mask_block=mask_block,
             )
 
             block.append(layer)
@@ -179,7 +190,6 @@ class MobileViTv2(nn.Module):
                 stride=stride,
                 expand_ratio=cfg.get("mv_expand_ratio", 4),
                 dilation=prev_dilation,
-                mask_block=False,
             )
 
             block.append(layer)
@@ -208,32 +218,153 @@ class MobileViTv2(nn.Module):
 
         return block, input_channel
 
-    def forward(self, x, masks=None, ids_keep_list=None, ids_restore_list=None):
+    def forward(self, x):
         results = []
 
         x = self.conv_1(x)
 
         for layer in self.layer_1:
-            x = layer(x, masks[0] if masks is not None else None)
+            x = layer(x)
         results.append(x)
 
         for layer in self.layer_2:
-            x = layer(x, masks[1] if masks is not None else None)
+            x = layer(x)
         results.append(x)
 
         for layer in self.layer_3:
-            if masks is not None and ids_keep_list is not None and ids_restore_list is not None:
-                x = layer(x, masks[2], ids_keep_list[2], ids_restore_list[2])
-            else:
-                x = layer(x, None, None, None)
+            x = layer(x)
         results.append(x)
 
         for layer in self.layer_4:
-            x = layer(x, None, None, None)
+            x = layer(x)
         results.append(x)
 
         for layer in self.layer_5:
-            x = layer(x, None, None, None)
+            x = layer(x)
         results.append(x)
 
         return results
+
+
+class LiMREncoder(nn.Module):
+    """LiMR encoder with clean stage management and timm-compatible weights.
+
+    Splits MobileViTv2 into independently-managed stages, inserts
+    SemanticMaskModule between frozen stage1 and trainable stage2.
+
+    Args:
+        width_multiplier: model width multiplier (alpha).
+        mask_ratio: training mask ratio (0 to disable semantic masking).
+        frozen_stages: number of stages to freeze (0=none, 1=stem,
+            2=stem+stage0, 3=stem+stage0+stage1).
+        block_ffn_dropout: dropout in FFN layers.
+        block_attn_dropout: dropout in attention layers.
+        load_timm_weights: if True, automatically load timm pretrained weights.
+    """
+
+    def __init__(
+        self,
+        width_multiplier: float = 1.75,
+        mask_ratio: float = 0.4,
+        frozen_stages: int = 3,
+        block_ffn_dropout: float = 0.1,
+        block_attn_dropout: float = 0.0,
+        load_timm_weights: bool = True,
+    ):
+        super().__init__()
+
+        mobilevit = MobileViTv2(
+            width_multiplier=width_multiplier,
+            block_ffn_dropout=block_ffn_dropout,
+            block_attn_dropout=block_attn_dropout,
+        )
+
+        self.stem = mobilevit.conv_1
+        self.stage0 = mobilevit.layer_1
+        self.stage1 = mobilevit.layer_2
+        self.stage2 = mobilevit.layer_3
+        self.stage3 = mobilevit.layer_4
+        self.stage4 = mobilevit.layer_5
+
+        stage1_out_channels = int(make_divisible(128 * width_multiplier, 8))
+        if mask_ratio > 0:
+            self.semantic_mask = SemanticMaskModule(
+                in_channels=stage1_out_channels,
+                mask_ratio=mask_ratio,
+                attn_dim=int(make_divisible(128 * width_multiplier, 8)),
+                num_attn_blocks=2,
+                patch_size=2,
+                dropout=block_ffn_dropout,
+            )
+        else:
+            self.semantic_mask = nn.Identity()
+
+        self._freeze_stages(frozen_stages)
+
+        if load_timm_weights:
+            self._load_timm_weights(width_multiplier)
+
+    def forward(self, x):
+        feats = []
+
+        x = self.stem(x)
+
+        for layer in self.stage0:
+            x = layer(x)
+        feats.append(x)
+
+        for layer in self.stage1:
+            x = layer(x)
+        feats.append(x)
+
+        x = self.semantic_mask(x)
+
+        for layer in self.stage2:
+            x = layer(x)
+        feats.append(x)
+
+        for layer in self.stage3:
+            x = layer(x)
+        feats.append(x)
+
+        for layer in self.stage4:
+            x = layer(x)
+        feats.append(x)
+
+        return feats
+
+    def _freeze_stages(self, n):
+        modules = {
+            1: [self.stem],
+            2: [self.stem, self.stage0],
+            3: [self.stem, self.stage0, self.stage1],
+        }
+        for m_list in modules.get(n, []):
+            for p in m_list.parameters():
+                p.requires_grad = False
+
+    def _load_timm_weights(self, alpha):
+        try:
+            import timm
+        except ImportError:
+            return
+
+        model_name = f"mobilevitv2_{int(alpha * 100):03d}"
+        try:
+            timm_model = timm.create_model(model_name, pretrained=True)
+        except Exception:
+            return
+
+        self._copy_state(timm_model.stem, self.stem)
+
+        timm_stages = timm_model.stages
+        for i, stage in enumerate([self.stage0, self.stage1, self.stage2, self.stage3, self.stage4]):
+            self._copy_state(timm_stages[i], stage)
+
+    @staticmethod
+    def _copy_state(src, dst):
+        src_state = src.state_dict()
+        dst_state = dst.state_dict()
+        matched = {k: v for k, v in src_state.items() if k in dst_state and dst_state[k].shape == v.shape}
+        dst_state.update(matched)
+        dst.load_state_dict(dst_state, strict=False)

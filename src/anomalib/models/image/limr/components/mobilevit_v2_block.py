@@ -117,49 +117,6 @@ class MobileViTBlockv2(nn.Module):
 
         return nn.Sequential(*global_rep), d_model
 
-    def unfolding_pytorch(self, feature_map: Tensor, mask: Optional[Tensor] = None, idx_keep: Optional[Tensor] = None) -> Tuple[Tensor, Tuple[int, int]]:
-        batch_size, in_channels, img_h, img_w = feature_map.shape
-
-        patches = F.unfold(
-            feature_map,
-            kernel_size=(self.patch_h, self.patch_w),
-            stride=(self.patch_h, self.patch_w),
-        )
-
-        if mask is not None:
-            patches = patches.reshape(batch_size, in_channels, self.patch_h * self.patch_w, -1)
-            feature_patches = torch.gather(
-                patches, 3,
-                idx_keep.view([feature_map.shape[0], 1, 1, -1]).expand(batch_size, in_channels, self.patch_h * self.patch_w, -1)
-            )
-        else:
-            patches = patches.reshape(batch_size, in_channels, self.patch_h * self.patch_w, -1)
-            feature_patches = patches
-
-        return feature_patches, (img_h, img_w)
-
-    def folding_pytorch(self, patches: Tensor, output_size: Tuple[int, int], ids_restore: Optional[Tensor] = None) -> Tensor:
-        batch_size, in_dim, patch_size, n_patches = patches.shape
-
-        patches = patches.reshape(batch_size, in_dim * patch_size, n_patches)
-
-        if ids_restore is not None:
-            mask_token = torch.zeros(
-                (batch_size, in_dim * patch_size, ids_restore.shape[1] - n_patches),
-                device=patches.device,
-            )
-            patches = torch.cat([patches, mask_token], dim=2)
-            patches = torch.gather(patches, 2, ids_restore.view([batch_size, 1, -1]).expand(batch_size, in_dim * patch_size, -1))
-
-        feature_map = F.fold(
-            patches,
-            output_size=output_size,
-            kernel_size=(self.patch_h, self.patch_w),
-            stride=(self.patch_h, self.patch_w),
-        )
-
-        return feature_map
-
     def resize_input_if_needed(self, x):
         batch_size, in_channels, orig_h, orig_w = x.shape
         if orig_h % self.patch_h != 0 or orig_w % self.patch_w != 0:
@@ -168,22 +125,28 @@ class MobileViTBlockv2(nn.Module):
             x = F.interpolate(x, size=(new_h, new_w), mode="bilinear", align_corners=True)
         return x
 
-    def forward_spatial(self, x: Tensor, mask: Optional[Tensor] = None, idx_keep: Optional[Tensor] = None, ids_restore: Optional[Tensor] = None) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         x = self.resize_input_if_needed(x)
-
-        if mask is not None:
-            x = x * mask
         fm_conv = self.local_rep(x)
 
-        patches, output_size = self.unfolding_pytorch(fm_conv, mask, idx_keep)
+        patches = F.unfold(
+            fm_conv,
+            kernel_size=(self.patch_h, self.patch_w),
+            stride=(self.patch_h, self.patch_w),
+        )
+        patches = patches.reshape(
+            x.shape[0], self.cnn_out_dim, self.patch_h * self.patch_w, -1
+        )
 
         patches = self.global_rep(patches)
 
-        fm = self.folding_pytorch(patches=patches, output_size=output_size, ids_restore=ids_restore)
+        patches = patches.reshape(x.shape[0], -1, patches.shape[3])
+        fm = F.fold(
+            patches,
+            output_size=(x.shape[2], x.shape[3]),
+            kernel_size=(self.patch_h, self.patch_w),
+            stride=(self.patch_h, self.patch_w),
+        )
 
         output = self.conv_proj(fm)
-
         return output
-
-    def forward(self, x: Tensor, mask: Optional[Tensor] = None, idx_keep: Optional[Tensor] = None, ids_restore: Optional[Tensor] = None) -> Tensor:
-        return self.forward_spatial(x, mask, idx_keep, ids_restore)
