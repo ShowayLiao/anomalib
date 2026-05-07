@@ -164,7 +164,17 @@ class Engine:
             callbacks = []
 
         # Cache the Lightning Trainer arguments.
-        logger = False if logger is None else logger
+        if logger is None:
+            # Auto-enable TensorBoardLogger if LearningRateMonitor is in callbacks
+            # to avoid MisconfigurationException from PyTorch Lightning
+            from lightning.pytorch.callbacks import LearningRateMonitor as _LRMCallback
+
+            if any(isinstance(cb, _LRMCallback) for cb in callbacks):
+                from lightning.pytorch.loggers import TensorBoardLogger as _TBLogger
+
+                logger = _TBLogger(save_dir=str(default_root_dir), name="logs")
+            else:
+                logger = False
         self._cache = _TrainerArgumentsCache(
             callbacks=[*callbacks],
             logger=logger,

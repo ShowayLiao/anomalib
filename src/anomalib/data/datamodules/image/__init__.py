@@ -32,6 +32,8 @@ Example:
 
 from enum import Enum
 
+from .aebad_s import AeBAD_S
+from .aebad_v import AeBAD_V
 from .bmad import BMAD
 from .btech import BTech
 from .datumaro import Datumaro
@@ -92,6 +94,8 @@ class ImageDataFormat(str, Enum):
 
 __all__ = [
     "ADAM_3D",
+    "AeBAD_S",
+    "AeBAD_V",
     "BMAD",
     "BTech",
     "Datumaro",

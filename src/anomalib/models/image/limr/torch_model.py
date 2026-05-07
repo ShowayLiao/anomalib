@@ -1,12 +1,14 @@
-from functools import partial
+import kornia
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from anomalib.models.components.feature_extractors import TimmFeatureExtractor
+from anomalib.data import InferenceBatch
+from anomalib.models.components.feature_extractors import TimmFeatureExtractor, dryrun_find_featuremap_dims
 
-from .components.encoder import MobileViTv2
 from .components.decoder import FPN
-from .components.masking import mask_everylayer, get_2d_sincos_pos_embed
+from .components.encoder import LiMREncoder
+from .components.masking import get_2d_sincos_pos_embed
 
 
 class LiMRModel(nn.Module):
@@ -15,10 +17,13 @@ class LiMRModel(nn.Module):
         backbone="resnet50",
         layers_to_extract_from=None,
         alpha=1.0,
+        mask_ratio=0.4,
         scale_factors=None,
         fpn_output_dim=None,
         block_ffn_dropout=0.1,
         block_attn_dropout=0.0,
+        frozen_stages=3,
+        load_timm_weights=True,
     ):
         super().__init__()
 
@@ -26,12 +31,10 @@ class LiMRModel(nn.Module):
             layers_to_extract_from = ["layer1", "layer2", "layer3"]
         if scale_factors is None:
             scale_factors = (4.0, 2.0, 1.0)
-        if fpn_output_dim is None:
-            fpn_output_dim = (64, 128, 256, 512)
 
         self.layers_to_extract_from = layers_to_extract_from
+        self.mask_ratio = mask_ratio
 
-        # Teacher model (frozen)
         self.teacher = TimmFeatureExtractor(
             backbone=backbone,
             pre_trained=True,
@@ -39,14 +42,27 @@ class LiMRModel(nn.Module):
             requires_grad=False,
         )
 
-        # Student encoder
-        self.encoder = MobileViTv2(
+        if fpn_output_dim is None:
+            teacher_dims = dryrun_find_featuremap_dims(
+                self.teacher, input_size=(256, 256), layers=layers_to_extract_from,
+            )
+            teacher_channels = [teacher_dims[layer]["num_features"] for layer in layers_to_extract_from]
+            fpn_output_dim = (
+                teacher_channels[0],
+                teacher_channels[1],
+                teacher_channels[2],
+                teacher_channels[2] * 2,
+            )
+
+        self.encoder = LiMREncoder(
             width_multiplier=alpha,
+            mask_ratio=mask_ratio,
+            frozen_stages=frozen_stages,
             block_ffn_dropout=block_ffn_dropout,
             block_attn_dropout=block_attn_dropout,
+            load_timm_weights=load_timm_weights,
         )
 
-        # Decoder FPN
         embed_dim = [64, 128, 256, 384, 512]
         embed_dim = [int(x * alpha) for x in embed_dim]
         decoder_embed_dim = embed_dim[3]
@@ -79,11 +95,6 @@ class LiMRModel(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward_encoder(self, x, mask_ratio):
-        masks, ids_keep_list, ids_restore_list = mask_everylayer(x, mask_ratio)
-        layers = self.encoder(x, masks, ids_keep_list, ids_restore_list)
-        return layers, masks, ids_restore_list
-
     def forward_decoder(self, x, mask=None):
         results = self.decoder(x, mask)
         results = results[1:]
@@ -92,26 +103,41 @@ class LiMRModel(nn.Module):
             for layer, feature in zip(self.layers_to_extract_from, results[::-1])
         }
 
-    def forward_train(self, x, mask_ratio=0.75):
+    def forward(self, x: torch.Tensor, mask_ratio: float | None = None) -> tuple | InferenceBatch:
+        if mask_ratio is not None:
+            self.mask_ratio = mask_ratio
+
         with torch.no_grad():
             teacher_features = self.teacher(x)
 
-        latent, mask, _ = self.forward_encoder(x, mask_ratio)
-        student_features = self.forward_decoder(latent, mask)
+        latent = self.encoder(x)
+        student_features = self.forward_decoder(latent, None)
 
         teacher_feat_list = [teacher_features[key] for key in self.layers_to_extract_from]
         student_feat_list = [student_features[key] for key in self.layers_to_extract_from]
 
-        return teacher_feat_list, student_feat_list
+        if self.training:
+            return teacher_feat_list, student_feat_list
 
-    def forward_eval(self, x, mask_ratio=0.0):
-        with torch.no_grad():
-            teacher_features = self.teacher(x)
+        anomaly_map = self._compute_anomaly_map(teacher_feat_list, student_feat_list, out_size=x.shape[-1])
+        pred_score = anomaly_map.view(anomaly_map.shape[0], -1).max(dim=1).values
+        return InferenceBatch(pred_score=pred_score, anomaly_map=anomaly_map)
 
-        latent, mask, _ = self.forward_encoder(x, mask_ratio)
-        student_features = self.forward_decoder(latent, mask)
+    @staticmethod
+    def _compute_anomaly_map(teacher_feats, student_feats, out_size: int) -> torch.Tensor:
+        anomaly_maps_list = []
+        for i in range(len(student_feats)):
+            a_map = 1 - F.cosine_similarity(student_feats[i], teacher_feats[i])
+            a_map = torch.unsqueeze(a_map, dim=1)
+            a_map = F.interpolate(a_map, size=out_size, mode="bilinear", align_corners=True)
+            a_map = a_map.squeeze(1)
+            anomaly_maps_list.append(a_map)
 
-        teacher_feat_list = [teacher_features[key] for key in self.layers_to_extract_from]
-        student_feat_list = [student_features[key] for key in self.layers_to_extract_from]
+        anomaly_map = torch.ones_like(anomaly_maps_list[0])
+        for a_map in anomaly_maps_list:
+            anomaly_map += a_map
 
-        return teacher_feat_list, student_feat_list
+        anomaly_map = anomaly_map.unsqueeze(1)
+        anomaly_map = kornia.filters.gaussian_blur2d(anomaly_map, kernel_size=(33, 33), sigma=(4.0, 4.0))
+        anomaly_map = anomaly_map.squeeze(1)
+        return anomaly_map

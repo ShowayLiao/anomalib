@@ -55,6 +55,7 @@ dependencies = [
     "matplotlib>=3.4.3",
     "scikit-learn",
     "platformdirs>=4.9.4",
+    "wandb>=0.26.1",
 ]
 
 [project.optional-dependencies]
@@ -354,6 +355,9 @@ lint.ignore = [
 lint.fixable = ["ALL"]
 lint.unfixable = []
 
+# Allow unused variables when underscore-prefixed.
+lint.dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
 # Exclude a variety of commonly ignored directories.
 exclude = [
     ".bzr",
@@ -380,9 +384,6 @@ exclude = [
 
 # Same as Black.
 line-length = 120
-
-# Allow unused variables when underscore-prefixed.
-lint.dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 # Assume Python 3.10.
 target-version = "py310"

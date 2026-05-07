@@ -5,7 +5,14 @@ import torch.nn as nn
 from torch import Tensor, Size
 import torch.nn.functional as F
 
-from .model_utils import make_divisible
+
+def make_divisible(v, divisor=8, min_value=None):
+    if min_value is None:
+        min_value = divisor
+    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+    if new_v < 0.9 * v:
+        new_v += divisor
+    return new_v
 
 
 class LayerNorm(nn.LayerNorm):
@@ -53,7 +60,6 @@ class InvertedResidual(nn.Module):
         expand_ratio: Union[int, float],
         dilation: int = 1,
         skip_connection: Optional[bool] = True,
-        mask_block: Optional[bool] = False,
     ) -> None:
         assert stride in [1, 2]
         hidden_dim = make_divisible(int(round(in_channels * expand_ratio)), 8)
@@ -127,16 +133,8 @@ class InvertedResidual(nn.Module):
         self.use_res_connect = (
             self.stride == 1 and in_channels == out_channels and skip_connection
         )
-        self.mask_block = mask_block
 
-    def forward(self, x: Tensor, mask: Optional[Tensor] = None) -> Tensor:
-        if self.mask_block and mask is not None:
-            if self.use_res_connect:
-                return (x + self.block(x)) * mask
-            else:
-                return self.block(x) * mask
-        else:
-            if self.use_res_connect:
-                return x + self.block(x)
-            else:
-                return self.block(x)
+    def forward(self, x: Tensor) -> Tensor:
+        if self.use_res_connect:
+            return x + self.block(x)
+        return self.block(x)

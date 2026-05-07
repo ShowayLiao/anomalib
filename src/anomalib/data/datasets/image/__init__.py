@@ -26,6 +26,8 @@ Example:
     ... )
 """
 
+from .aebad_s import AeBADSDataset
+from .aebad_v import AeBADVDataset
 from .bmad import BMADDataset
 from .btech import BTechDataset
 from .datumaro import DatumaroDataset
@@ -42,6 +44,8 @@ from .vad import VADDataset
 from .visa import VisaDataset
 
 __all__ = [
+    "AeBADSDataset",
+    "AeBADVDataset",
     "BMADDataset",
     "BTechDataset",
     "DatumaroDataset",
