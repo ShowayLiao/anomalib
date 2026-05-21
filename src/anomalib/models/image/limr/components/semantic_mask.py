@@ -26,12 +26,14 @@ class SemanticMaskModule(nn.Module):
         attn_dim: int | None = None,
         num_attn_blocks: int = 2,
         patch_size: int = 2,
+        mask_grid_size: int = 7,
         dropout: float = 0.1,
         ffn_dropout: float = 0.1,
     ):
         super().__init__()
         self.mask_ratio = mask_ratio
         self.patch_size = patch_size
+        self.mask_grid_size = mask_grid_size
         self.in_channels = in_channels
         attn_dim = attn_dim or (in_channels // 2)
 
@@ -102,7 +104,8 @@ class SemanticMaskModule(nn.Module):
             stride=(PH, PW),
         )
 
-        return x + self.proj(fm)
+        # return x + self.proj(fm)
+        return self.proj(fm)
 
     def _inference_forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
@@ -118,14 +121,14 @@ class SemanticMaskModule(nn.Module):
         patches = patches.reshape(B, -1, (H // PH) * (W // PW))
         fm = F.fold(patches, output_size=(H, W), kernel_size=(PH, PW), stride=(PH, PW))
 
-        return x + self.proj(fm)
+        return self.proj(fm)
 
     def _make_mask(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, C, H, W = x.shape
 
-        _, mask_coarse, _ = random_masking(x, self.mask_ratio)
-        H_coarse, W_coarse = H // 32, W // 32
-        mask_coarse = mask_coarse.reshape(B, 1, H_coarse, W_coarse)
+        _, mask_coarse, _ = random_masking(x, self.mask_ratio, grid_size=self.mask_grid_size)
+        gs = self.mask_grid_size
+        mask_coarse = mask_coarse.reshape(B, 1, gs, gs)
 
         mask_spatial = F.interpolate(mask_coarse.float(), size=(H, W), mode='nearest')
 

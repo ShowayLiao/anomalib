@@ -6,7 +6,7 @@ python tools\limr\train.py ^
     --root I:\exp\datasets\AeBAD\AeBAD_S ^
     --category AeBAD_S ^
     --image-size 256 ^
-    --train-batch-size 16 ^
+    --train-batch-size 2 ^
     --eval-batch-size 16 ^
     --backbone resnet34 ^
     --alpha 1.75 ^

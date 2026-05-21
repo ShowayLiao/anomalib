@@ -36,10 +36,9 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     return emb
 
 
-def random_masking(x, mask_ratio):
+def random_masking(x, mask_ratio, grid_size=7):
     N = x.shape[0]
-    H, W = x.shape[2], x.shape[3]
-    L = (H // 32) * (W // 32)
+    L = grid_size * grid_size
     len_keep = int(L * (1 - mask_ratio))
     noise = torch.rand(N, L, device=x.device)
     ids_shuffle = torch.argsort(noise, dim=1)

@@ -4,9 +4,11 @@
 import argparse
 import json
 import time
+import gc
 from pathlib import Path
 
 import torch
+from torchvision.transforms import v2
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
 
 from anomalib.callbacks import TimerCallback
@@ -101,6 +103,14 @@ def _build_aebad_s(args):
         "train_batch_size": args.train_batch_size,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
+        "train_augmentations": v2.Compose([
+            v2.RandomResizedCrop(
+                size=(args.image_size, args.image_size),
+                scale=(0.7, 1.0),
+                interpolation=v2.InterpolationMode.BICUBIC,
+            ),
+            v2.RandomHorizontalFlip(p=0.5),
+        ]),
     }
 
 
@@ -113,6 +123,14 @@ def _build_aebad_v(args):
         "train_batch_size": args.train_batch_size,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
+        "train_augmentations": v2.Compose([
+            v2.RandomResizedCrop(
+                size=(args.image_size, args.image_size),
+                scale=(0.7, 1.0),
+                interpolation=v2.InterpolationMode.BICUBIC,
+            ),
+            v2.RandomHorizontalFlip(p=0.5),
+        ]),
     }
 
 
@@ -214,27 +232,45 @@ def measure_inference_speed(model: LiMR, datamodule,
     print("=" * 80)
 
     datamodule.setup("test")
-    test_dataloader = datamodule.test_dataloader()
 
     model = model.to(device)
     model.eval()
     use_cuda = device == "cuda" and torch.cuda.is_available()
 
+    speed_num_workers = min(datamodule.num_workers, 4)
+
+    # ------------------------------------------------------------------
+    # 预热阶段：使用独立 dataloader，完成后立即释放
+    # ------------------------------------------------------------------
     print(f"预热 ({warmup} iter)...")
+    warmup_loader = datamodule.test_dataloader()
     with torch.no_grad():
-        for i, batch in enumerate(test_dataloader):
+        for i, batch in enumerate(warmup_loader):
             if i >= warmup:
                 break
             images = batch["image"].to(device)
             _ = model(images)
+            del images
+    del warmup_loader
+    gc.collect()
+    if use_cuda:
+        torch.cuda.empty_cache()
 
-    print(f"测量 ({iterations} iter)...")
+    # ------------------------------------------------------------------
+    # 测量阶段：使用全新独立 dataloader，降低 num_workers 减少内存压力
+    # ------------------------------------------------------------------
+    _original_num_workers = datamodule.num_workers
+    datamodule.num_workers = speed_num_workers
+    measure_loader = datamodule.test_dataloader()
+    datamodule.num_workers = _original_num_workers
+
+    print(f"测量 ({iterations} iter, num_workers={speed_num_workers})...")
     total_time_e2e = 0.0
     total_time_pure = 0.0
     total_images = 0
 
     with torch.no_grad():
-        for i, batch in enumerate(test_dataloader):
+        for i, batch in enumerate(measure_loader):
             if i >= iterations:
                 break
 
@@ -261,6 +297,7 @@ def measure_inference_speed(model: LiMR, datamodule,
 
                 iter_e2e = e0.elapsed_time(e1) / 1000.0
                 iter_pure = e2.elapsed_time(e3) / 1000.0
+                del e0, e1, e2, e3
             else:
                 t0 = time.perf_counter()
                 images = batch["image"].to(device)
@@ -275,11 +312,17 @@ def measure_inference_speed(model: LiMR, datamodule,
             total_time_e2e += iter_e2e
             total_time_pure += iter_pure
 
-            if (i + 1) % 10 == 0:
+            del images
+            if i % 10 == 9:
                 print(f"  iter {i+1}/{iterations}: "
                       f"e2e={iter_e2e*1000:.2f}ms "
                       f"pure={iter_pure*1000:.2f}ms "
                       f"batch={batch_size}")
+
+    del measure_loader
+    gc.collect()
+    if use_cuda:
+        torch.cuda.empty_cache()
 
     avg_e2e_per_img = total_time_e2e / total_images
     avg_pure_per_img = total_time_pure / total_images
@@ -371,7 +414,42 @@ def main():
     print("=" * 80)
     print("测试")
     print("=" * 80)
-    engine.test(model=model, datamodule=datamodule)
+
+    if args.dataset in ("aebad_s", "aebad_v"):
+        if args.dataset == "aebad_s":
+            good_test_dir = Path(args.root) / "test" / "good"
+            domain_shifts = sorted(
+                d.name for d in good_test_dir.iterdir()
+                if d.is_dir()
+            ) if good_test_dir.is_dir() else ["same", "view"]
+        else:
+            test_dir = Path(args.root) / "test"
+            domain_shifts = sorted(
+                d.name for d in test_dir.iterdir()
+                if d.is_dir()
+            ) if test_dir.is_dir() else ["video1", "video2", "video3"]
+        for shift in domain_shifts:
+            print(f"\n  >>> domain_shift = {shift}")
+            for metric in evaluator.test_metrics:
+                metric.reset()
+            evaluator._update_count = 0
+            builder_kwargs = builder(args)
+            builder_kwargs["domain_shift"] = shift
+            test_dm = dataset_cls(**builder_kwargs)
+            engine.test(model=model, datamodule=test_dm)
+            del test_dm
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    else:
+        engine.test(model=model, datamodule=datamodule)
+
+    for metric in evaluator.test_metrics:
+        metric.reset()
+    evaluator._update_count = 0
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     print("=" * 80)
     print("推理速度")
