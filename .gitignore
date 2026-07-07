@@ -182,3 +182,4 @@ application/**/logs/
 
 # output
 output_*/
+*output*/

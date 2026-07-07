@@ -27,6 +27,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from lightning.pytorch.utilities.types import STEP_OUTPUT
+import torch
 from torch import optim
 
 from anomalib import LearningType
@@ -162,6 +163,9 @@ class LiMR(AnomalibModule):
             frozen_stages=frozen_stages,
             load_timm_weights=load_timm_weights,
         )
+
+        # 供 Lightning ModelSummary 计算 FLOPs
+        self.example_input_array = torch.randn(1, 3, 224, 224)
 
         self.loss = LiMRLoss()
 

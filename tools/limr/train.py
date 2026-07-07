@@ -396,6 +396,26 @@ def main():
         evaluator=evaluator,
     )
 
+    # ------------------------------------------------------------------
+    # 算力测量（FLOPs / 参数量）
+    # ------------------------------------------------------------------
+    try:
+        from fvcore.nn import FlopCountAnalysis, parameter_count
+        dummy = torch.randn(1, 3, 224, 224)
+        flops = FlopCountAnalysis(model.model, dummy)
+        params = parameter_count(model.model)[""]
+        flops_g = flops.total() / 1e9
+        params_m = params / 1e6
+        print("=" * 80)
+        print(f"模型算力: {flops_g:.2f} GFLOPs  |  参数量: {params_m:.2f}M")
+        print("=" * 80)
+    except ImportError:
+        flops_g, params_m = None, None
+        print("fvcore 未安装，跳过 FLOPs 计算。安装: pip install fvcore")
+    except Exception as e:
+        flops_g, params_m = None, None
+        print(f"FLOPs 计算失败: {e}")
+
     # 日志
     logger = None
     if WANDB_AVAILABLE:
@@ -504,8 +524,30 @@ def main():
         json.dump(speed, f, indent=2)
 
     if WANDB_AVAILABLE:
-        wandb.log({"inference_speed": speed})
+        wandb_log = {
+            "speed_total_images": speed["total_images"],
+            "speed_e2e_ms": speed["end_to_end"]["avg_ms_per_image"],
+            "speed_e2e_fps": speed["end_to_end"]["fps"],
+            "speed_pure_ms": speed["pure_inference"]["avg_ms_per_image"],
+            "speed_pure_fps": speed["pure_inference"]["fps"],
+        }
+        if flops_g is not None:
+            wandb_log["flops_g"] = flops_g
+            wandb_log["params_m"] = params_m
+        wandb.log(wandb_log)
         wandb.finish()
+
+    # ------------------------------------------------------------------
+    # 导出 ONNX
+    # ------------------------------------------------------------------
+    print("=" * 80)
+    print("导出 ONNX")
+    print("=" * 80)
+    try:
+        onnx_path = model.to_onnx(output_dir, input_size=(224, 224), opset_version=14)
+        print(f"ONNX 已导出至: {onnx_path}")
+    except Exception as e:
+        print(f"ONNX 导出失败: {e}")
 
     print("=" * 80)
     print("完成")
