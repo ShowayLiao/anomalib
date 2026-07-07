@@ -150,3 +150,65 @@ class MobileViTBlockv2(nn.Module):
 
         output = self.conv_proj(fm)
         return output
+
+    def unfolding_pytorch(self, feature_map, mask=None, idx_keep=None):
+        batch_size, in_channels, img_h, img_w = feature_map.shape
+
+        patches = F.unfold(
+            feature_map,
+            kernel_size=(self.patch_h, self.patch_w),
+            stride=(self.patch_h, self.patch_w),
+        )
+
+        if mask is not None:
+            patches = patches.reshape(
+                batch_size, in_channels, self.patch_h * self.patch_w, -1
+            )
+            feature_patches = torch.gather(patches, 3,
+                idx_keep.view([feature_map.shape[0], 1, 1, -1]).
+                expand(batch_size, in_channels, self.patch_h * self.patch_w, -1))
+        else:
+            patches = patches.reshape(
+                batch_size, in_channels, self.patch_h * self.patch_w, -1
+            )
+            feature_patches = patches
+
+        return feature_patches, (img_h, img_w)
+
+    def folding_pytorch(self, patches, output_size, ids_restore=None):
+        batch_size, in_dim, patch_size, n_patches = patches.shape
+        patches = patches.reshape(batch_size, in_dim * patch_size, n_patches)
+
+        if ids_restore is not None:
+            mask_token = torch.zeros(
+                (batch_size, in_dim * patch_size, ids_restore.shape[1] - n_patches),
+                device=patches.device
+            )
+            patches = torch.cat([patches, mask_token], dim=2)
+            patches = torch.gather(patches, 2,
+                ids_restore.view([batch_size, 1, -1]).
+                expand(batch_size, in_dim * patch_size, -1))
+
+        feature_map = F.fold(
+            patches,
+            output_size=output_size,
+            kernel_size=(self.patch_h, self.patch_w),
+            stride=(self.patch_h, self.patch_w),
+        )
+        return feature_map
+
+    def forward_masked(self, x, mask=None, idx_keep=None, ids_restore=None):
+        x = self.resize_input_if_needed(x)
+
+        if mask is not None:
+            x = x * mask
+        fm_conv = self.local_rep(x)
+
+        patches, output_size = self.unfolding_pytorch(fm_conv, mask, idx_keep)
+
+        patches = self.global_rep(patches)
+
+        fm = self.folding_pytorch(patches, output_size, ids_restore)
+
+        output = self.conv_proj(fm)
+        return output

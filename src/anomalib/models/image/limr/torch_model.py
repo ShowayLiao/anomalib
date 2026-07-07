@@ -22,6 +22,7 @@ class LiMRModel(nn.Module):
         fpn_output_dim=None,
         block_ffn_dropout=0.1,
         block_attn_dropout=0.0,
+        block_dropout=0.1,
         frozen_stages=3,
         load_timm_weights=True,
     ):
@@ -60,6 +61,7 @@ class LiMRModel(nn.Module):
             frozen_stages=frozen_stages,
             block_ffn_dropout=block_ffn_dropout,
             block_attn_dropout=block_attn_dropout,
+            block_dropout=block_dropout,
             load_timm_weights=load_timm_weights,
         )
 
@@ -106,6 +108,7 @@ class LiMRModel(nn.Module):
     def forward(self, x: torch.Tensor, mask_ratio: float | None = None) -> tuple | InferenceBatch:
         if mask_ratio is not None:
             self.mask_ratio = mask_ratio
+            self.encoder.mask_ratio = mask_ratio
 
         with torch.no_grad():
             teacher_features = self.teacher(x)
@@ -133,11 +136,14 @@ class LiMRModel(nn.Module):
             a_map = a_map.squeeze(1)
             anomaly_maps_list.append(a_map)
 
-        anomaly_map = torch.ones_like(anomaly_maps_list[0])
+        anomaly_map = torch.zeros_like(anomaly_maps_list[0])
         for a_map in anomaly_maps_list:
             anomaly_map += a_map
 
         anomaly_map = anomaly_map.unsqueeze(1)
-        anomaly_map = kornia.filters.gaussian_blur2d(anomaly_map, kernel_size=(33, 33), sigma=(4.0, 4.0))
+        anomaly_map = kornia.filters.gaussian_blur2d(
+            anomaly_map, kernel_size=(33, 33), sigma=(4.0, 4.0),
+            border_type="replicate",
+        )
         anomaly_map = anomaly_map.squeeze(1)
         return anomaly_map

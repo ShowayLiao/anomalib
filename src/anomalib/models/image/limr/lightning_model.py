@@ -7,9 +7,9 @@ This module implements the LiMR model for anomaly detection. The model uses a te
 architecture where a frozen teacher extracts features, and a lightweight student encoder-decoder
 reconstructs masked semantic features. The reconstruction error is used to detect anomalies.
 
-Semantic masking is applied via an independent SemanticMaskModule between frozen
-feature extractor stages and trainable refinement stages, enabling one-shot timm
-weight loading and clean stage-wise freezing.
+Semantic masked reconstruction is applied inside the LiMViT block (stage2/layer_3),
+matching the original paper's design. Frozen initial stages extract semantic features,
+while the LiMViT block performs masked reconstruction on these features internally.
 
 Example:
     >>> from anomalib.models import LiMR
@@ -36,6 +36,7 @@ from anomalib.models.components import AnomalibModule
 from anomalib.post_processing import PostProcessor
 from anomalib.pre_processing import PreProcessor
 from anomalib.visualization import Visualizer
+from torchvision.transforms.v2 import CenterCrop, Compose, Normalize, Resize
 
 from .components.losses import LiMRLoss
 from .torch_model import LiMRModel
@@ -91,6 +92,8 @@ class LiMR(AnomalibModule):
             Defaults to ``0.1``.
         block_attn_dropout: Dropout rate for attention blocks.
             Defaults to ``0.0``.
+        block_dropout: Dropout rate for MobileViTBlockv2.
+            Defaults to ``0.1``.
         pre_processor: Pre-processor for the model.
             Defaults to ``True``.
         post_processor: Post-processor instance.
@@ -117,6 +120,7 @@ class LiMR(AnomalibModule):
         warmup_epochs: int = 15,
         block_ffn_dropout: float = 0.1,
         block_attn_dropout: float = 0.0,
+        block_dropout: float = 0.1,
         pre_processor: PreProcessor | bool = True,
         post_processor: PostProcessor | bool = True,
         evaluator: Evaluator | bool = True,
@@ -154,16 +158,34 @@ class LiMR(AnomalibModule):
             fpn_output_dim=fpn_output_dim,
             block_ffn_dropout=block_ffn_dropout,
             block_attn_dropout=block_attn_dropout,
+            block_dropout=block_dropout,
             frozen_stages=frozen_stages,
             load_timm_weights=load_timm_weights,
         )
 
         self.loss = LiMRLoss()
 
+    @classmethod
+    def configure_pre_processor(cls, image_size: tuple[int, int] | None = None) -> PreProcessor:
+        """LiMR preprocessor: Resize → CenterCrop → Normalize.
+
+        Matches the original paper's pipeline: Resize to a larger size
+        then CenterCrop to the target size.
+        """
+        image_size = image_size or (256, 256)
+        crop_size = (224, 224)
+
+        transform = Compose([
+            Resize(image_size, antialias=True),
+            CenterCrop(crop_size),
+            Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+        return PreProcessor(transform=transform)
+
     @property
     def trainer_arguments(self) -> dict[str, Any]:
         """Return LiMR trainer arguments."""
-        return {"gradient_clip_val": 0.1, "num_sanity_val_steps": 0}
+        return {"num_sanity_val_steps": 0}
 
     @property
     def learning_type(self) -> LearningType:
