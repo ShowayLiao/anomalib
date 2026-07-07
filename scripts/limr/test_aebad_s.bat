@@ -6,11 +6,14 @@ python tools\limr\test.py ^
     --root I:\exp\datasets\AeBAD\AeBAD_S ^
     --category AeBAD_S ^
     --image-size 256 ^
-    --train-batch-size 16 ^
     --eval-batch-size 16 ^
     --backbone resnet34 ^
     --alpha 1.75 ^
-    --aebad-s-domain-shift same ^
-    --checkpoint .\output_limr\aebad_s\LiMR\AeBAD_S\AeBAD_S\v2\weights\lightning\model.ckpt ^
-    --output-dir ./output_limr/aebad_s/test_same
+    --block-dropout 0.0 ^
+    --block-ffn-dropout 0.0 ^
+    --block-attn-dropout 0.0 ^
+    --frozen-stages 3 ^
+    --seed 54 ^
+    --original-checkpoint I:\exp\LiMR\best_student_model_175.pth ^
+    --output-dir ./output_limr_test/aebad_s
 pause

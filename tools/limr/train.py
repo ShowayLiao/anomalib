@@ -3,13 +3,16 @@
 
 import argparse
 import json
+import random
 import time
 import gc
 from pathlib import Path
 
+import numpy as np
 import torch
 from torchvision.transforms import v2
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
+from lightning.pytorch import seed_everything
 
 from anomalib.callbacks import TimerCallback
 from anomalib.data import (
@@ -105,7 +108,7 @@ def _build_aebad_s(args):
         "num_workers": args.num_workers,
         "train_augmentations": v2.Compose([
             v2.RandomResizedCrop(
-                size=(args.image_size, args.image_size),
+                size=(224, 224),
                 scale=(0.7, 1.0),
                 interpolation=v2.InterpolationMode.BICUBIC,
             ),
@@ -125,7 +128,7 @@ def _build_aebad_v(args):
         "num_workers": args.num_workers,
         "train_augmentations": v2.Compose([
             v2.RandomResizedCrop(
-                size=(args.image_size, args.image_size),
+                size=(224, 224),
                 scale=(0.7, 1.0),
                 interpolation=v2.InterpolationMode.BICUBIC,
             ),
@@ -168,7 +171,7 @@ def parse_args() -> argparse.Namespace:
                         help="输入图像尺寸")
     parser.add_argument("--train-batch-size", type=int, default=16)
     parser.add_argument("--eval-batch-size", type=int, default=16)
-    parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument("--num-workers", type=int, default=6)
 
     # RealIAD 专用参数
     parser.add_argument("--realiad-resolution", type=str, default="256",
@@ -203,13 +206,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mask-ratio", type=float, default=0.4)
     parser.add_argument("--test-mask-ratio", type=float, default=0.0)
     parser.add_argument("--fpn-output-dim", type=int, nargs="+", default=None)
+    parser.add_argument("--block-dropout", type=float, default=0.1,
+                        help="MobileViTBlockv2 dropout rate")
+    parser.add_argument("--block-ffn-dropout", type=float, default=0.0,
+                        help="FFN dropout rate in LiMViT blocks (match original paper: 0.0)")
+    parser.add_argument("--block-attn-dropout", type=float, default=0.0,
+                        help="Attention dropout rate in LiMViT blocks (match original paper: 0.0)")
 
     # 训练参数
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--weight-decay", type=float, default=0.05)
     parser.add_argument("--warmup-epochs", type=int, default=15)
-    parser.add_argument("--early-stop-patience", type=int, default=20)
+    parser.add_argument("--early-stop-patience", type=int, default=10)
+    parser.add_argument("--frozen-stages", type=int, default=3,
+                        help="Number of encoder stages to freeze (1=stem, 2=stem+stage0, 3=stem+stage0+stage1)")
+    parser.add_argument("--seed", type=int, default=54,
+                        help="Random seed for reproducibility")
 
     # 输出
     parser.add_argument("--output-dir", type=str, default="./output_limr")
@@ -341,6 +354,8 @@ def measure_inference_speed(model: LiMR, datamodule,
 def main():
     args = parse_args()
 
+    seed_everything(args.seed, workers=True)
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -371,6 +386,10 @@ def main():
         mask_ratio=args.mask_ratio,
         test_mask_ratio=args.test_mask_ratio,
         fpn_output_dim=tuple(args.fpn_output_dim) if args.fpn_output_dim else None,
+        block_dropout=args.block_dropout,
+        block_ffn_dropout=args.block_ffn_dropout,
+        block_attn_dropout=args.block_attn_dropout,
+        frozen_stages=args.frozen_stages,
         lr=args.lr,
         weight_decay=args.weight_decay,
         warmup_epochs=args.warmup_epochs,
@@ -393,7 +412,7 @@ def main():
             monitor="train_loss_epoch",
             patience=args.early_stop_patience,
             mode="min",
-            min_delta=0.01,
+            min_delta=0.001,
             verbose=True,
         ),
         LearningRateMonitor(logging_interval="epoch"),
@@ -428,6 +447,10 @@ def main():
                 d.name for d in test_dir.iterdir()
                 if d.is_dir()
             ) if test_dir.is_dir() else ["video1", "video2", "video3"]
+
+        # collect per-shift metrics for averaging
+        all_shift_metrics: dict[str, list[float]] = {}
+
         for shift in domain_shifts:
             print(f"\n  >>> domain_shift = {shift}")
             for metric in evaluator.test_metrics:
@@ -436,11 +459,25 @@ def main():
             builder_kwargs = builder(args)
             builder_kwargs["domain_shift"] = shift
             test_dm = dataset_cls(**builder_kwargs)
-            engine.test(model=model, datamodule=test_dm)
+            results = engine.test(model=model, datamodule=test_dm)
+            # collect metrics from results (1st dataloader)
+            if results:
+                for k, v in results[0].items():
+                    if isinstance(v, (int, float)):
+                        all_shift_metrics.setdefault(k, []).append(v)
             del test_dm
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+
+        # print average across all domain shifts
+        if all_shift_metrics:
+            print("\n" + "=" * 80)
+            print("AeBAD 多 domain-shift 平均结果")
+            print("=" * 80)
+            for metric_name, values in all_shift_metrics.items():
+                avg = sum(values) / len(values)
+                print(f"  {metric_name}: {avg:.4f}  (shifts: {[f'{v:.4f}' for v in values]})")
     else:
         engine.test(model=model, datamodule=datamodule)
 

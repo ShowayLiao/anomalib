@@ -8,6 +8,7 @@ import gc
 from pathlib import Path
 
 import torch
+from lightning.pytorch import seed_everything
 
 from anomalib.data import (
     AeBAD_S, AeBAD_V,
@@ -141,13 +142,25 @@ def parse_args() -> argparse.Namespace:
                         choices=["video1", "video2", "video3"])
 
     # 模型
-    parser.add_argument("--checkpoint", type=str, required=True,
-                        help="模型权重文件路径")
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="anomalib Lightning checkpoint 路径 (.ckpt)")
+    parser.add_argument("--original-checkpoint", type=str, default=None,
+                        help="原始 LiMR 仓库权重文件路径 (.pth)")
     parser.add_argument("--backbone", type=str, default="resnet50")
     parser.add_argument("--alpha", type=float, default=1.75)
     parser.add_argument("--mask-ratio", type=float, default=0.4)
     parser.add_argument("--test-mask-ratio", type=float, default=0.0)
     parser.add_argument("--fpn-output-dim", type=int, nargs="+", default=None)
+    parser.add_argument("--block-dropout", type=float, default=0.0,
+                        help="MobileViTBlockv2 dropout rate")
+    parser.add_argument("--block-ffn-dropout", type=float, default=0.0,
+                        help="FFN dropout rate in LiMViT blocks")
+    parser.add_argument("--block-attn-dropout", type=float, default=0.0,
+                        help="Attention dropout rate in LiMViT blocks")
+    parser.add_argument("--frozen-stages", type=int, default=3,
+                        help="Number of encoder stages to freeze")
+    parser.add_argument("--seed", type=int, default=54,
+                        help="Random seed for reproducibility")
 
     # 输出
     parser.add_argument("--output-dir", type=str, default="./output_limr_test")
@@ -157,6 +170,60 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--measure-iterations", type=int, default=100)
 
     return parser.parse_args()
+
+
+_ORIGINAL_KEY_MAP = {
+    "encoder.conv_1": "model.encoder.stem",
+    "encoder.layer_1": "model.encoder.stage0",
+    "encoder.layer_2": "model.encoder.stage1",
+    "encoder.layer_3": "model.encoder.stage2",
+    "encoder.layer_4": "model.encoder.stage3",
+    "encoder.layer_5": "model.encoder.stage4",
+    "decoder.": "model.decoder.",
+    "decoder_FPN_pos_embed": "model.decoder_FPN_pos_embed",
+}
+
+_SKIP_KEYS = {"norm.weight", "norm.bias"}
+
+
+def _load_original_checkpoint(model: LiMR, pth_path: str):
+    checkpoint = torch.load(pth_path, map_location="cpu")
+    if "model_state_dict" in checkpoint:
+        src_state = checkpoint["model_state_dict"]
+    else:
+        src_state = checkpoint
+
+    remapped = {}
+    skipped = []
+    for k, v in src_state.items():
+        if k in _SKIP_KEYS:
+            skipped.append(k)
+            continue
+        new_k = k
+        mapped = False
+        for old_prefix, new_prefix in _ORIGINAL_KEY_MAP.items():
+            if k.startswith(old_prefix):
+                new_k = k.replace(old_prefix, new_prefix, 1)
+                mapped = True
+                break
+        if not mapped:
+            skipped.append(k)
+            continue
+        remapped[new_k] = v
+
+    if skipped:
+        print(f"跳过的 key ({len(skipped)}): {skipped}")
+    print(f"原始 key 数: {len(src_state)}, 映射成功: {len(remapped)}, 跳过: {len(skipped)}")
+
+    missing, unexpected = model.load_state_dict(remapped, strict=False)
+    if missing:
+        print(f"未加载 (目标缺少): {len(missing)} keys")
+        for k in sorted(missing)[:10]:
+            print(f"  - {k}")
+    if unexpected:
+        print(f"未匹配 (源多余): {len(unexpected)} keys")
+
+    print(f"权重加载完成: {len(remapped) - len(unexpected)}/{len(remapped)} keys loaded")
 
 
 def measure_inference_speed(model, datamodule, device="cuda", warmup=10, iterations=100) -> dict:
@@ -265,6 +332,11 @@ def measure_inference_speed(model, datamodule, device="cuda", warmup=10, iterati
 def main():
     args = parse_args()
 
+    if not args.checkpoint and not args.original_checkpoint:
+        raise ValueError("必须指定 --checkpoint 或 --original-checkpoint 之一")
+
+    seed_everything(args.seed, workers=True)
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -292,8 +364,21 @@ def main():
         mask_ratio=args.mask_ratio,
         test_mask_ratio=args.test_mask_ratio,
         fpn_output_dim=tuple(args.fpn_output_dim) if args.fpn_output_dim else None,
+        block_dropout=args.block_dropout,
+        block_ffn_dropout=args.block_ffn_dropout,
+        block_attn_dropout=args.block_attn_dropout,
+        frozen_stages=args.frozen_stages,
         evaluator=evaluator,
     )
+
+    if args.original_checkpoint:
+        print("=" * 80)
+        print(f"从原始权重加载: {args.original_checkpoint}")
+        print("=" * 80)
+        _load_original_checkpoint(model, args.original_checkpoint)
+        ckpt_path = None
+    else:
+        ckpt_path = args.checkpoint
 
     engine = Engine()
 
@@ -318,13 +403,13 @@ def main():
             builder_kwargs = builder(args)
             builder_kwargs["domain_shift"] = shift
             test_dm = dataset_cls(**builder_kwargs)
-            engine.test(model=model, datamodule=test_dm, ckpt_path=args.checkpoint)
+            engine.test(model=model, datamodule=test_dm, ckpt_path=ckpt_path)
             del test_dm
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
     else:
-        engine.test(model=model, datamodule=datamodule, ckpt_path=args.checkpoint)
+        engine.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
 
     for metric in evaluator.test_metrics:
         metric.reset()
