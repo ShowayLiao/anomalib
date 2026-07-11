@@ -8,4 +8,8 @@
 
 .github/workflows/*.lock.yml linguist-generated=true merge=ours
 *.ipynb !text !filter !merge !diff
+*.{png,jpg,jpeg,gif,svg,webp,ico,bmp} binary -text -diff
+# Exclude generated output from GitHub language stats
+output_limr/** linguist-generated=true
+*.ckpt linguist-generated=true
 * !text !filter !merge !diff
