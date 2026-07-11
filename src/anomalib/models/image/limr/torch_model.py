@@ -11,6 +11,15 @@ from .components.encoder import LiMREncoder
 from .components.masking import get_2d_sincos_pos_embed
 
 
+def _get_gaussian_kernel(kernel_size: int = 33, sigma: float = 4.0) -> torch.Tensor:
+    """创建固定高斯核，用于替代 kornia.filters.gaussian_blur2d（ONNX 兼容）。"""
+    ax = torch.arange(kernel_size, dtype=torch.float32) - kernel_size // 2
+    xx, yy = torch.meshgrid(ax, ax, indexing="ij")
+    kernel = torch.exp(-(xx ** 2 + yy ** 2) / (2 * sigma ** 2))
+    kernel = kernel / kernel.sum()
+    return kernel.view(1, 1, kernel_size, kernel_size)
+
+
 class LiMRModel(nn.Module):
     def __init__(
         self,
@@ -141,9 +150,8 @@ class LiMRModel(nn.Module):
             anomaly_map += a_map
 
         anomaly_map = anomaly_map.unsqueeze(1)
-        anomaly_map = kornia.filters.gaussian_blur2d(
-            anomaly_map, kernel_size=(33, 33), sigma=(4.0, 4.0),
-            border_type="replicate",
-        )
+        # ONNX 兼容：用 F.conv2d 替代 kornia.filters.gaussian_blur2d
+        anomaly_map = F.pad(anomaly_map, (16, 16, 16, 16), mode="replicate")
+        anomaly_map = F.conv2d(anomaly_map, _get_gaussian_kernel(33, 4.0).to(anomaly_map.device), groups=1)
         anomaly_map = anomaly_map.squeeze(1)
         return anomaly_map

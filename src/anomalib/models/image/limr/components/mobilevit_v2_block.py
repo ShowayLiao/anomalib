@@ -125,6 +125,7 @@ class MobileViTBlockv2(nn.Module):
             x = F.interpolate(x, size=(new_h, new_w), mode="bilinear", align_corners=True)
         return x
 
+    # inference forward
     def forward(self, x: Tensor) -> Tensor:
         x = self.resize_input_if_needed(x)
         fm_conv = self.local_rep(x)
@@ -141,12 +142,11 @@ class MobileViTBlockv2(nn.Module):
         patches = self.global_rep(patches)
 
         patches = patches.reshape(x.shape[0], -1, patches.shape[3])
-        fm = F.fold(
-            patches,
-            output_size=(x.shape[2], x.shape[3]),
-            kernel_size=(self.patch_h, self.patch_w),
-            stride=(self.patch_h, self.patch_w),
-        )
+        # ONNX 兼容：用 reshape+permute 替代 F.fold（避免 aten::col2im）
+        b, h, w = x.shape[0], x.shape[2], x.shape[3]
+        n_h, n_w = h // self.patch_h, w // self.patch_w
+        fm = patches.reshape(b, -1, self.patch_h, self.patch_w, n_h, n_w)
+        fm = fm.permute(0, 1, 4, 2, 5, 3).reshape(b, -1, h, w)
 
         output = self.conv_proj(fm)
         return output
@@ -189,12 +189,11 @@ class MobileViTBlockv2(nn.Module):
                 ids_restore.view([batch_size, 1, -1]).
                 expand(batch_size, in_dim * patch_size, -1))
 
-        feature_map = F.fold(
-            patches,
-            output_size=output_size,
-            kernel_size=(self.patch_h, self.patch_w),
-            stride=(self.patch_h, self.patch_w),
-        )
+        # ONNX 兼容：用 reshape+permute 替代 F.fold（避免 aten::col2im）
+        oh, ow = output_size[0], output_size[1]
+        n_h, n_w = oh // self.patch_h, ow // self.patch_w
+        feature_map = patches.reshape(batch_size, -1, self.patch_h, self.patch_w, n_h, n_w)
+        feature_map = feature_map.permute(0, 1, 4, 2, 5, 3).reshape(batch_size, -1, oh, ow)
         return feature_map
 
     def forward_masked(self, x, mask=None, idx_keep=None, ids_restore=None):

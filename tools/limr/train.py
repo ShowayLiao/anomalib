@@ -52,7 +52,6 @@ def _build_standard_dataset(args):
     return {
         "root": args.root,
         "category": args.category,
-        "image_size": (args.image_size, args.image_size),
         "train_batch_size": args.train_batch_size,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
@@ -75,7 +74,6 @@ def _build_realiad(args):
 def _build_kolektor(args):
     return {
         "root": args.root,
-        "image_size": (args.image_size, args.image_size),
         "train_batch_size": args.train_batch_size,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
@@ -89,7 +87,6 @@ def _build_folder(args):
         "normal_test_dir": args.folder_normal_test_dir,
         "abnormal_dir": args.folder_abnormal_dir,
         "mask_dir": args.folder_mask_dir,
-        "image_size": (args.image_size, args.image_size),
         "train_batch_size": args.train_batch_size,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
@@ -481,10 +478,15 @@ def main():
             test_dm = dataset_cls(**builder_kwargs)
             results = engine.test(model=model, datamodule=test_dm)
             # collect metrics from results (1st dataloader)
+            shift_metrics = {}
             if results:
                 for k, v in results[0].items():
                     if isinstance(v, (int, float)):
                         all_shift_metrics.setdefault(k, []).append(v)
+                        shift_metrics[f"{k}_{shift}"] = v
+            # 将每个 shift 的结果分别推送到 WandB
+            if WANDB_AVAILABLE and wandb.run is not None and shift_metrics:
+                wandb.log(shift_metrics)
             del test_dm
             gc.collect()
             if torch.cuda.is_available():
@@ -495,9 +497,14 @@ def main():
             print("\n" + "=" * 80)
             print("AeBAD 多 domain-shift 平均结果")
             print("=" * 80)
+            avg_metrics = {}
             for metric_name, values in all_shift_metrics.items():
                 avg = sum(values) / len(values)
+                avg_metrics[metric_name] = avg
                 print(f"  {metric_name}: {avg:.4f}  (shifts: {[f'{v:.4f}' for v in values]})")
+            # 将平均值写入 WandB（覆盖被 Lightning callback 写的最后一个 shift 值）
+            if WANDB_AVAILABLE and wandb.run is not None:
+                wandb.log(avg_metrics)
     else:
         engine.test(model=model, datamodule=datamodule)
 
@@ -544,7 +551,10 @@ def main():
     print("导出 ONNX")
     print("=" * 80)
     try:
-        onnx_path = model.to_onnx(output_dir, input_size=(224, 224), opset_version=14)
+        # 放入与 ckpt 同级的版本目录（to_onnx 会自动追加 weights/onnx/）
+        best_ckpt = Path(engine.trainer.checkpoint_callback.best_model_path)
+        ckpt_version_dir = best_ckpt.parent.parent.parent  # lightning/weights/ -> v34/
+        onnx_path = model.to_onnx(ckpt_version_dir, input_size=(224, 224), opset_version=18)
         print(f"ONNX 已导出至: {onnx_path}")
     except Exception as e:
         print(f"ONNX 导出失败: {e}")

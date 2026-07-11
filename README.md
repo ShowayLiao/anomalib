@@ -1,405 +1,252 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/open-edge-platform/anomalib/main/docs/source/_static/images/logos/anomalib-wide-blue.png" width="600px" alt="Anomalib Logo - A deep learning library for anomaly detection">
+# LiMR
 
-**A library for benchmarking, developing and deploying deep learning anomaly detection algorithms**
+**Lightweight Masked Reconstruction for Real-Time Sensor-Driven Anomaly Detection in Industrial IoT**
+
+<p align="center">
+  <a href="">📄 Paper</a> &nbsp;|&nbsp;
+  <a href="https://github.com/ShowayLiao/LiMR_cpp">⚡ C++ Implementation</a>
+</p>
+
+[![pytorch](https://img.shields.io/badge/pytorch-2.6%2B-orange)]()
+[![lightning](https://img.shields.io/badge/lightning-2.2%2B-blue)]()
+[![anomalib](https://img.shields.io/badge/anomalib-v2.3-green)]()
 
 ---
 
-[Key Features](#key-features) •
-[Docs](https://anomalib.readthedocs.io/en/latest/) •
-[Notebooks](examples/notebooks) •
-[License](LICENSE)
-
-[![python](https://img.shields.io/badge/python-3.10%2B-green)]()
-[![pytorch](https://img.shields.io/badge/pytorch-2.6%2B-orange)]()
-[![lightning](https://img.shields.io/badge/lightning-2.2%2B-blue)]()
-[![openvino](https://img.shields.io/badge/openvino-2024.0%2B-purple)]()
-
-[![Pre-Merge Checks](https://github.com/open-edge-platform/anomalib/actions/workflows/pre_merge.yml/badge.svg)](https://github.com/open-edge-platform/anomalib/actions/workflows/pre_merge.yml)
-[![codecov](https://codecov.io/gh/open-edge-platform/anomalib/branch/main/graph/badge.svg?token=Z6A07N1BZK)](https://codecov.io/gh/open-edge-platform/anomalib)
-[![Downloads](https://static.pepy.tech/personalized-badge/anomalib?period=total&units=international_system&left_color=grey&right_color=green&left_text=PyPI%20Downloads)](https://pepy.tech/project/anomalib)
-[![snyk](https://snyk.io/advisor/python/anomalib/badge.svg)](https://snyk.io/advisor/python/anomalib)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/8330/badge)](https://www.bestpractices.dev/projects/8330)
-
-[![ReadTheDocs](https://readthedocs.org/projects/anomalib/badge/?version=latest)](https://anomalib.readthedocs.io/en/latest/?badge=latest)
-[![Anomalib - Gurubase docs](https://img.shields.io/badge/Gurubase-Ask%20Anomalib%20Guru-006BFF)](https://gurubase.io/g/anomalib)
-
-<a href="https://trendshift.io/repositories/6030" target="_blank"><img src="https://trendshift.io/api/badge/repositories/6030" alt="open-edge-platform%2Fanomalib | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+[Quick Start](#-quick-start) •
+[Datasets](#-supported-datasets) •
+[Parameters](#-parameter-reference) •
+[Scripts](#-batch-scripts) •
+[FAQ](#-faq) •
+[Reference](#-reference)
 
 </div>
 
 ---
 
-> 🌟 **Announcing v2.3.3 Patch Release!** 🌟
->
-> This patch release changes data and model download locations, adds pandas 3.0 compatibility fixes, and includes security-focused dependency updates.
->
-> What's changed
->
-> - Moved pre-trained model downloads to platform-specific cache directories.
-> - Added deprecation warnings for legacy local `./datasets/<dataset>` roots ahead of the v2.6.0 cache-directory migration.
-> - Updated security-sensitive dependencies including `mlflow`.
->
-> Bug fixes
->
-> - Fixed enum-based DataFrame comparisons for pandas >= 3.0 compatibility.
->
-> We value your input! Please share feedback via [GitHub Issues](https://github.com/open-edge-platform/anomalib/issues) or our [Discussions](https://github.com/open-edge-platform/anomalib/discussions)
+This is the anomalib-integrated implementation of **LiMR**, a lightweight teacher-student architecture for visual anomaly detection. The model uses a frozen teacher encoder to extract multi-scale features, while a lightweight MobileViTv2-based student encoder-decoder reconstructs semantic features under masked reconstruction — achieving competitive accuracy at high throughput.
 
-# 👋 Introduction
+> 📄 **Original repository:** [ShowayLiao/LiMR](https://github.com/ShowayLiao/LiMR)
+> 📘 **Anomalib upstream README:** [originalREADME.md](originalREADME.md)
 
-Anomalib is a deep learning library that aims to collect state-of-the-art anomaly detection algorithms for benchmarking on both public and private datasets. Anomalib provides several ready-to-use implementations of anomaly detection algorithms described in the recent literature, as well as a set of tools that facilitate the development and implementation of custom models. The library has a strong focus on visual anomaly detection, where the goal of the algorithm is to detect and/or localize anomalies within images or videos in a dataset. Anomalib is constantly updated with new algorithms and training/inference extensions, so keep checking!
+---
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/open-edge-platform/anomalib/main/docs/source/_static/images/readme.png" width="1000" alt="A prediction made by anomalib">
-</p>
+# 🚀 Quick Start
 
-## Key features
-
-- Simple and modular API and CLI for training, inference, benchmarking, and hyperparameter optimization.
-- The largest public collection of ready-to-use deep learning anomaly detection algorithms and benchmark datasets.
-- [**Lightning**](https://www.lightning.ai/) based model implementations to reduce boilerplate code and limit the implementation efforts to the bare essentials.
-- The majority of models can be exported to [**OpenVINO**](https://www.intel.com/content/www/us/en/developer/tools/openvino-toolkit/overview.html) Intermediate Representation (IR) for accelerated inference on Intel hardware.
-- A set of [inference tools](tools) for quick and easy deployment of the standard or custom anomaly detection models.
-
-# 📦 Installation
-
-Anomalib can be installed from PyPI. We recommend using a virtual environment and a modern package installer like `uv` or `pip`.
-
-## 🚀 Quick Install
-
-For a standard installation, you can use `uv` or `pip`. This will install the latest version of Anomalib with its core dependencies. PyTorch will be installed based on its default behavior, which usually works for CPU and standard CUDA setups.
+## ⌨️ Training
 
 ```bash
-# With uv
-uv pip install anomalib
+# Activate environment
+.venv\Scripts\activate.bat
 
-# Or with pip
-pip install anomalib
+# MVTec (single category)
+python tools\limr\train.py --dataset mvtec --root ./datasets/MVTec --category bottle \
+    --image-size 224 --backbone resnet50 --alpha 1.75 --epochs 200
+
+# AeBAD-S
+python tools\limr\train.py --dataset aebad_s --root I:\exp\datasets\AeBAD\AeBAD_S \
+    --category AeBAD_S --image-size 256 --backbone resnet34 --alpha 1.75 \
+    --fpn-output-dim 64 128 256 512 --block-dropout 0.0 --block-ffn-dropout 0.0 \
+    --block-attn-dropout 0.0 --frozen-stages 3 --epochs 200 --seed 54
+
+# AeBAD-V
+python tools\limr\train.py --dataset aebad_v --root I:\exp\datasets\AeBAD\AeBAD_V \
+    --category AeBAD_V --image-size 256 --backbone resnet34 --alpha 1.75 \
+    --fpn-output-dim 64 128 256 512 --block-dropout 0.0 --block-ffn-dropout 0.0 \
+    --block-attn-dropout 0.0 --frozen-stages 3 --epochs 200 --seed 54
+
+# RealIAD
+python tools\limr\train.py --dataset realiad --root ./datasets/RealIAD --category <category> \
+    --realiad-resolution 256 --realiad-json ./datasets/RealIAD/RealIAD.json
+
+# VISA
+python tools\limr\train.py --dataset visa --root ./datasets/VISA --category candle \
+    --image-size 224 --backbone resnet50
+
+# Folder (custom dataset)
+python tools\limr\train.py --dataset folder --root ./datasets/my_data \
+    --folder-normal-dir normal --folder-abnormal-dir abnormal --folder-mask-dir mask \
+    --category my_dataset
 ```
 
-For more control over the installation, such as specifying the PyTorch backend (e.g., XPU, CUDA and ROCm) or installing extra dependencies for specific models, see the advanced options below.
+## ⌨️ Testing
+
+```bash
+# Test anomalib checkpoint (.ckpt)
+python tools\limr\test.py --dataset mvtec --root ./datasets/MVTec --category bottle \
+    --image-size 224 --backbone resnet50 --alpha 1.75 --checkpoint ./output_limr/xxx.ckpt
+
+# Test original LiMR weights (.pth)
+python tools\limr\test.py --dataset aebad_s --root I:\exp\datasets\AeBAD\AeBAD_S \
+    --category AeBAD_S --image-size 256 --backbone resnet34 --alpha 1.75 \
+    --block-dropout 0.0 --block-ffn-dropout 0.0 --block-attn-dropout 0.0 \
+    --frozen-stages 3 --seed 54 --original-checkpoint I:\exp\LiMR\best_student_model_175.pth
+```
+
+> 📘 **Note:** Testing must use the same `backbone`, `alpha`, `frozen-stages`, `fpn-output-dim`, and `block-*dropout` settings as training, otherwise weight loading will be incomplete.
+
+---
+
+# 📦 Supported Datasets
+
+| `--dataset` | Dataset | Notes |
+|:------------|:--------|:------|
+| `mvtec` | MVTec AD | 15 industrial categories |
+| `mvtecad2` | MVTec AD 2 | Extended categories |
+| `mvtec_loco` | MVTec LOCO | Logical constraints |
+| `btech` | BeanTech | 3 categories |
+| `bmad` | BMAD | Biomedical anomaly |
+| `mpdd` | MPDD | Metal parts |
+| `vad` | VAD | Vehicle anomaly |
+| `visa` | VISA | 12 categories |
+| `realiad` | RealIAD | 30 categories, multi-resolution |
+| `kolektor` | KolektorSDD2 | Surface defect |
+| `aebad_s` | AeBAD-S | Static images + 4 domain shifts |
+| `aebad_v` | AeBAD-V | Video frames |
+| `folder` | Folder | Custom dataset |
+
+---
+
+# ⚙️ Parameter Reference
+
+## Data Parameters
+
+| Parameter | Description | Default |
+|:----------|:------------|:--------|
+| `--dataset` | Dataset name | `mvtec` |
+| `--root` | Dataset root directory | `./datasets/MVTec` |
+| `--category` | Sub-category / object class | `bottle` |
+| `--image-size` | Input image size (square) | `256` |
+| `--train-batch-size` | Training batch size | `16` |
+| `--eval-batch-size` | Evaluation batch size | `16` |
+| `--num-workers` | DataLoader workers | `6` |
+
+## Model Parameters
+
+| Parameter | Description | Default |
+|:----------|:------------|:--------|
+| `--backbone` | Teacher encoder | `resnet50` |
+| `--alpha` | Student width multiplier (1.0=100%) | `1.75` |
+| `--mask-ratio` | Training mask ratio | `0.4` |
+| `--test-mask-ratio` | Test mask ratio | `0.0` |
+| `--fpn-output-dim` | FPN output channels per layer | auto-detect |
+| `--block-dropout` | MobileViTBlockv2 dropout | `0.1` |
+| `--block-ffn-dropout` | FFN dropout | `0.0` |
+| `--block-attn-dropout` | Attention dropout | `0.0` |
+| `--frozen-stages` | Frozen encoder stages (1-3) | `3` |
+
+## Training Parameters
+
+| Parameter | Description | Default |
+|:----------|:------------|:--------|
+| `--epochs` | Max training epochs | `200` |
+| `--lr` | Learning rate | `0.001` |
+| `--weight-decay` | Weight decay | `0.05` |
+| `--warmup-epochs` | LR warmup epochs | `15` |
+| `--early-stop-patience` | Early stopping patience | `10` |
+| `--seed` | Random seed | `54` |
 
 <details>
-<summary><strong>💡 Advanced Installation: Specify Hardware Backend</strong></summary>
+<summary><strong>Test & Output Parameters</strong></summary>
 
-To ensure compatibility with your hardware, you can specify a backend during installation. This is the recommended approach for production environments and for hardware other than CPU or standard CUDA.
+| Parameter | Description |
+|:----------|:------------|
+| `--checkpoint` | anomalib Lightning ckpt path (`.ckpt`) |
+| `--original-checkpoint` | Original LiMR weights path (`.pth`) |
+| `--output-dir` | Output directory |
+| `--project-name` | W&B project name |
 
-**Using `uv`:**
+</details>
 
-```bash
-# CPU support (default, works on all platforms)
-uv pip install "anomalib[cpu]"
+---
 
-# CUDA 12.6 support (Linux/Windows with NVIDIA GPU)
-uv pip install "anomalib[cu126]"
+# 📜 Batch Scripts
 
-# CUDA 13.0 support (Linux/Windows with NVIDIA GPU)
-uv pip install "anomalib[cu130]"
+Double-click any `.bat` file to run. Ensure `.venv` is created beforehand.
 
-# CUDA 11.8 support (Linux/Windows with NVIDIA GPU)
-uv pip install "anomalib[cu118]"
+| Script | Purpose |
+|:-------|:--------|
+| `scripts\limr\train_aebad_s.bat` | Train AeBAD-S |
+| `scripts\limr\train_aebad_v.bat` | Train AeBAD-V |
+| `scripts\limr\train_mvtec.bat` | Train MVTec (single category) |
+| `scripts\limr\train_mvtec_all.bat` | Train MVTec (all 15 categories) |
+| `scripts\limr\train_visa.bat` | Train VISA |
+| `scripts\limr\train_realiad.bat` | Train RealIAD |
+| `scripts\limr\train_folder.bat` | Train custom dataset |
+| `scripts\limr\test_aebad_s.bat` | Test AeBAD-S |
+| `scripts\limr\test_aebad_v.bat` | Test AeBAD-V |
+| `scripts\limr\test_mvtec.bat` | Test MVTec |
+| `scripts\limr\test_visa.bat` | Test VISA |
+| `scripts\limr\test_realiad.bat` | Test RealIAD |
+| `scripts\limr\test_folder.bat` | Test custom dataset |
 
-# ROCm support (Linux with AMD GPU)
-uv pip install "anomalib[rocm]"
+---
 
-# Intel XPU support (Linux with Intel GPU)
-uv pip install "anomalib[xpu]"
+# 📂 Output Structure
+
+After training, the following is generated under `--output-dir`:
+
+```
+output_limr/aebad_s/
+├── LiMR/AeBAD_S/AeBAD_S/v34/
+│   └── weights/
+│       ├── lightning/model.ckpt   # Best checkpoint
+│       └── onnx/model.onnx        # ONNX export
+├── inference_speed.json           # Inference benchmark
+└── wandb/                         # W&B logs (if enabled)
 ```
 
-**Using `pip`:**
-The same extras can be used with `pip`:
+---
 
-```bash
-pip install "anomalib[cu130]"
-```
+# ❓ FAQ
+
+<details>
+<summary><strong>Out of memory (OOM)?</strong></summary>
+
+- Reduce `--train-batch-size` (e.g., `8` or `6`)
+- Reduce `--num-workers`
+- Switch `--backbone` to `resnet18`
 
 </details>
 
 <details>
-<summary><strong>🧩 Advanced Installation: Additional Dependencies</strong></summary>
+<summary><strong>Weight loading errors during testing?</strong></summary>
 
-Anomalib includes most dependencies by default. For specialized features, you may need additional optional dependencies. Remember to include your hardware-specific extra.
-
-```bash
-# Example: Install with OpenVINO support and CUDA 13.0
-uv pip install "anomalib[openvino,cu130]"
-
-# Example: Install all optional dependencies for a CPU-only setup
-uv pip install "anomalib[full,cpu]"
-```
-
-Here is a list of available optional dependency groups:
-
-| Extra         | Description                              | Purpose                                     |
-| :------------ | :--------------------------------------- | :------------------------------------------ |
-| `[openvino]`  | Intel OpenVINO optimization              | For accelerated inference on Intel hardware |
-| `[clip]`      | Vision-language models                   | `winclip`                                   |
-| `[vlm]`       | Vision-language model backends           | Advanced VLM features                       |
-| `[loggers]`   | Experiment tracking (wandb, comet, etc.) | For experiment management                   |
-| `[notebooks]` | Jupyter notebook support                 | For running example notebooks               |
-| `[full]`      | All optional dependencies                | All optional features                       |
+Ensure test parameters match training. When using `--original-checkpoint` to load legacy weights, you must use `--backbone resnet34` (default in the original repo).
 
 </details>
 
 <details>
-<summary><strong>🔧 Advanced Installation: Install from Source</strong></summary>
+<summary><strong>How does AeBAD multi-shift testing work?</strong></summary>
 
-For contributing to `anomalib` or using a development version, you can install from source.
-
-**Using `uv`:**
-This is the recommended method for developers as it uses the project's lock file for reproducible environments.
-
-```bash
-git clone https://github.com/open-edge-platform/anomalib.git
-cd anomalib
-
-# Create the virtual environment
-uv venv
-
-# Sync with the lockfile for a specific backend (e.g., CPU)
-uv sync --extra cpu
-
-# Or for a different backend like CUDA 13.0
-uv sync --extra cu130
-
-# To set up a full development environment
-uv sync --extra dev --extra cpu
-```
-
-**Using `pip`:**
-
-```bash
-git clone https://github.com/open-edge-platform/anomalib.git
-cd anomalib
-
-# Install in editable mode with a specific backend
-pip install -e ".[cpu]"
-
-# Install with development dependencies
-pip install -e ".[dev,cpu]"
-```
+AeBAD testing automatically iterates over all `domain_shift` subdirectories (`same`, `background`, `illumination`, `view`) and reports cross-shift average metrics at the end. Each shift's individual results are also logged to W&B.
 
 </details>
 
-# 🧠 Training
+---
 
-Anomalib supports both API and CLI-based training approaches:
+<!-- # 📚 Reference
 
-## 🔌 Python API
-
-```python
-from anomalib.data import MVTecAD
-from anomalib.models import Patchcore
-from anomalib.engine import Engine
-
-# Initialize components
-datamodule = MVTecAD()
-model = Patchcore()
-engine = Engine()
-
-# Train the model
-engine.fit(datamodule=datamodule, model=model)
-```
-
-## ⌨️ Command Line
-
-```bash
-# Train with default settings
-anomalib train --model Patchcore --data anomalib.data.MVTecAD
-
-# Train with custom category
-anomalib train --model Patchcore --data anomalib.data.MVTecAD --data.category transistor
-
-# Train with config file
-anomalib train --config path/to/config.yaml
-```
-
-# 🤖 Inference
-
-Anomalib provides multiple inference options including Torch, Lightning, Gradio, and OpenVINO. Here's how to get started:
-
-## 🔌 Python API
-
-```python
-# Load model and make predictions
-predictions = engine.predict(
-    datamodule=datamodule,
-    model=model,
-    ckpt_path="path/to/checkpoint.ckpt",
-)
-```
-
-## ⌨️ Command Line
-
-```bash
-# Basic prediction
-anomalib predict --model anomalib.models.Patchcore \
-                 --data anomalib.data.MVTecAD \
-                 --ckpt_path path/to/model.ckpt
-
-# Prediction with results
-anomalib predict --model anomalib.models.Patchcore \
-                 --data anomalib.data.MVTecAD \
-                 --ckpt_path path/to/model.ckpt \
-                 --return_predictions
-```
-
-> 📘 **Note:** For advanced inference options including Gradio and OpenVINO, check our [Inference Documentation](https://anomalib.readthedocs.io).
-
-# Training on Intel GPUs
-
-> [!Note]
-> Currently, only single GPU training is supported on Intel GPUs.
-> These commands were tested on Arc 750 and Arc 770.
-
-Ensure that you have PyTorch with XPU support installed. For more information, please refer to the [PyTorch XPU documentation](https://pytorch.org/docs/stable/notes/get_start_xpu.html)
-
-## 🔌 API
-
-```python
-from anomalib.data import MVTecAD
-from anomalib.engine import Engine, SingleXPUStrategy, XPUAccelerator
-from anomalib.models import Stfpm
-
-engine = Engine(
-    strategy=SingleXPUStrategy(),
-    accelerator=XPUAccelerator(),
-)
-engine.train(Stfpm(), datamodule=MVTecAD())
-```
-
-## ⌨️ CLI
-
-```bash
-anomalib train --model Padim --data MVTecAD --trainer.accelerator xpu --trainer.strategy xpu_single
-```
-
-# ⚙️ Hyperparameter Optimization
-
-Anomalib supports hyperparameter optimization (HPO) using [Weights & Biases](https://wandb.ai/) and [Comet.ml](https://www.comet.com/).
-
-```bash
-# Run HPO with Weights & Biases
-anomalib hpo --backend WANDB --sweep_config tools/hpo/configs/wandb.yaml
-```
-
-> 📘 **Note:** For detailed HPO configuration, check our [HPO Documentation](https://open-edge-platform.github.io/anomalib/tutorials/hyperparameter_optimization.html).
-
-# 🧪 Experiment Management
-
-Track your experiments with popular logging platforms through [PyTorch Lightning loggers](https://pytorch-lightning.readthedocs.io/en/stable/extensions/logging.html):
-
-- 📊 Weights & Biases
-- 📈 Comet.ml
-- 📉 TensorBoard
-
-Enable logging in your config file to track:
-
-- Hyperparameters
-- Metrics
-- Model graphs
-- Test predictions
-
-> 📘 **Note:** For logging setup, see our [Logging Documentation](https://open-edge-platform.github.io/anomalib/tutorials/logging.html).
-
-# 📊 Benchmarking
-
-Evaluate and compare model performance across different datasets:
-
-```bash
-# Run benchmarking with default configuration
-anomalib benchmark --config tools/experimental/benchmarking/sample.yaml
-```
-
-> 💡 **Tip:** Check individual model performance in their respective README files:
->
-> - [Patchcore Results](src/anomalib/models/image/patchcore/README.md#mvtec-ad-dataset)
-> - [Other Models](src/anomalib/models/)
-
-# Anomalib Studio
-
-Anomalib Studio is a low/no-code web application that allows users to train and deploy anomaly detection models. It enables users to leverage Anomalib's features in their operational environment. Users can connect USB and IP cameras, or use a folder of images, as input to the training pipeline. The tool allows direct output to their industrial pipelines through ROS messages, MQTT, etc.
-
-<p align="center">
-  <img src="docs/source/_static/images/anomalib_studio.png" alt="Anomalib Studio" />
-</p>
-
-The source code for Anomalib Studio lives in the [application](application) folder.
-
-Anomalib Studio is available as two distributions:
-
-1. As a [docker container](application/docker)
-2. As a [standalone application](application/ui)
-
-For more information on each, refer to the respective README files.
-
-## Get started with development build
-
-### Setup Backend Dependencies
-
-> [!NOTE]
-> This assumes that you have `uv` installed. If not, please refer to the [installation guide](https://docs.astral.sh/uv/getting-started/installation/).
-
-```bash
-cd application/backend
-uv sync --extra xpu # or uv sync --extra cu130 for CUDA 13.0, uv sync --extra cpu for CPU
-```
-
-### Setup Frontend Dependencies
-
-```bash
-cd application/ui
-npm install
-```
-
-### Run the application
-
-> [!IMPORTANT]
-> Both backend and frontend dependencies should be installed before running the application.
-
-Run the backend server:
-
-```bash
-cd application/backend
-./run.sh
-```
-
-Run the frontend server:
-
-```bash
-cd application/ui
-npm run start
-```
-
-Navigate to [http://localhost:3000](http://localhost:3000) to see the application.
-
-# ✍️ Reference
-
-If you find Anomalib useful in your research or work, please cite:
+If you find LiMR useful in your research or work, please cite the original paper:
 
 ```tex
-@inproceedings{akcay2022anomalib,
-  title={Anomalib: A deep learning library for anomaly detection},
-  author={Akcay, Samet and Ameln, Dick and Vaidya, Ashwin and Lakshmanan, Barath and Ahuja, Nilesh and Genc, Utku},
-  booktitle={2022 IEEE International Conference on Image Processing (ICIP)},
-  pages={1706--1710},
-  year={2022},
-  organization={IEEE}
+@inproceedings{liao2024limr,
+  title     = {Lightweight Masked Reconstruction for Real-Time Sensor-Driven
+               Anomaly Detection in Industrial IoT},
+  author    = {Liao, Showay and others},
+  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision
+               and Pattern Recognition (CVPR)},
+  year      = {2024},
 }
-```
+``` -->
 
-# 👥 Contributing
+## Acknowledgements
 
-We welcome contributions! Check out our [Contributing Guide](CONTRIBUTING.md) to get started.
+We acknowledge the excellent open-source implementations that this work builds upon:
 
-<p align="center">
-  <a href="https://github.com/open-edge-platform/anomalib/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=open-edge-platform/anomalib" alt="Contributors to open-edge-platform/anomalib" />
-  </a>
-</p>
-
-<p align="center">
-  <b>Thank you to all our contributors!</b>
-</p>
+- [ConvMAE](https://github.com/Alpha-VL/ConvMAE)
+- [MobileViTv2](https://github.com/apple/ml-cvnets)
+- [MobileViTv2-pytorch](https://github.com/HowardLi0816/MobileViTv2_pytorch)
+- [MMR](https://github.com/zhangzilongc/MMR)

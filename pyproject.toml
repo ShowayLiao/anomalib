@@ -56,6 +56,7 @@ dependencies = [
     "scikit-learn",
     "platformdirs>=4.9.4",
     "wandb>=0.26.1",
+    "onnxscript[cu126]>=0.7.0",
 ]
 
 [project.optional-dependencies]

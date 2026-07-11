@@ -9,13 +9,13 @@ for %%c in (%CATEGORIES%) do (
     echo ========================================
     python tools\limr\train.py ^
         --dataset mvtec ^
-        --root ./datasets/MVTec ^
+        --root I:\exp\datasets\mvtec ^
         --category %%c ^
         --image-size 224 ^
         --train-batch-size 16 ^
         --eval-batch-size 16 ^
         --num-workers 6 ^
-        --backbone resnet50 ^
+        --backbone resnet34 ^
         --alpha 1.75 ^
         --mask-ratio 0.4 ^
         --test-mask-ratio 0.0 ^
