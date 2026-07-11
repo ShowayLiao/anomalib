@@ -5,6 +5,10 @@
 **Lightweight Masked Reconstruction for Real-Time Sensor-Driven Anomaly Detection in Industrial IoT**
 
 <p align="center">
+  🌐 <a href="README_zh.md">中文</a>
+</p>
+
+<p align="center">
   <a href="">📄 Paper</a> &nbsp;|&nbsp;
   <a href="https://github.com/ShowayLiao/LiMR_cpp">⚡ C++ Implementation</a>
 </p>
@@ -13,16 +17,34 @@
 [![lightning](https://img.shields.io/badge/lightning-2.2%2B-blue)]()
 [![anomalib](https://img.shields.io/badge/anomalib-v2.3-green)]()
 
----
+<img src="assets/framework.png" alt="LiMR Framework" width="600" />
 
-[Quick Start](#-quick-start) •
-[Datasets](#-supported-datasets) •
-[Parameters](#-parameter-reference) •
-[Scripts](#-batch-scripts) •
-[FAQ](#-faq) •
-[Reference](#-reference)
+
+
+
 
 </div>
+
+---
+
+- [LiMR](#limr)
+- [📊 Performance](#-performance)
+  - [AeBAD-S (Aero-Engine Blade)](#aebad-s-aero-engine-blade)
+  - [MVTec AD](#mvtec-ad)
+  - [Jetson AGX Xavier Edge Deployment](#jetson-agx-xavier-edge-deployment)
+- [🚀 Quick Start](#-quick-start)
+  - [⌨️ Training](#️-training)
+  - [⌨️ Testing](#️-testing)
+- [📦 Supported Datasets](#-supported-datasets)
+- [⚙️ Parameter Reference](#️-parameter-reference)
+  - [Data Parameters](#data-parameters)
+  - [Model Parameters](#model-parameters)
+  - [Training Parameters](#training-parameters)
+- [📜 Batch Scripts](#-batch-scripts)
+- [📂 Output Structure](#-output-structure)
+- [⚡ TensorRT High-Speed Deployment](#-tensorrt-high-speed-deployment)
+- [❓ FAQ](#-faq)
+  - [Acknowledgements](#acknowledgements)
 
 ---
 
@@ -30,6 +52,60 @@ This is the anomalib-integrated implementation of **LiMR**, a lightweight teache
 
 > 📄 **Original repository:** [ShowayLiao/LiMR](https://github.com/ShowayLiao/LiMR)
 > 📘 **Anomalib upstream README:** [originalREADME.md](originalREADME.md)
+
+---
+
+# 📊 Performance
+
+## AeBAD-S (Aero-Engine Blade)
+
+LiMR achieves **state-of-the-art** performance on AeBAD-S while drastically reducing model complexity.
+
+| Method | Params (M) | FLOPs (G) | Latency (ms) | Throughput (img/s) | AUROC (%) | PRO (%) |
+|:-------|:-----------|:----------|:-------------|:-------------------|:----------|:--------|
+| MMR    | 170.98 | 18.60 | 33.83 | 29.56 | 84.7 | 89.1 |
+| PatchCore | 68.95 | 11.46 | 79.62 | 12.56 | 71.0 | 87.8 |
+| RD | 91.75 | 31.61 | 25.98 | 38.49 | 81.0 | 85.6 |
+| SimpleNet | 11.68 | 1.83 | 63.81 | 15.67 | 58.4 | 68.3 |
+| **LiMR-175** | **40.06** | **10.21** | **23.26** | **42.99** | **85.3** | **91.1** |
+| LiMR-175 (TensorRT) | 40.06 | 10.21 | **8.26** | **121.07** | 85.3 | 91.1 |
+
+> Compared to MMR: **76.6% fewer params**, **45.1% lower FLOPs**, **45.5% higher throughput**, while surpassing MMR in both AUROC and PRO.
+
+<img src="assets/aebad-s.png" alt="LiMR Framework" width="600" />
+
+## MVTec AD
+
+LiMR maintains competitive accuracy on the standard MVTec AD benchmark.
+
+| Method | Image AUROC (%) | Pixel AUROC (%) |
+|:-------|:----------------|:----------------|
+| PatchCore | 99.1 | 98.1 |
+| RD | 98.5 | 97.8 |
+| SimpleNet | **99.6** | **98.1** |
+| MMR | 98.4 | 97.2 |
+| **LiMR** | **97.5** | **96.9** |
+
+> LiMR achieves comparable accuracy to SOTA methods while using a lightweight CNN-ViT hybrid architecture — ideal for resource-constrained deployment.
+
+<img src="assets/mvtec.png" alt="LiMR Framework" width="600" />
+
+## Jetson AGX Xavier Edge Deployment
+
+| Method | VRAM (GB) | Latency (ms) | Throughput (FPS) | AUROC (%) |
+|:-------|:----------|:-------------|:-----------------|:----------|
+| LiMR | 1.44 | 82.22 | 12.16 | 85.32 |
+| LiMR (TensorRT FP32) | 1.20 | 32.01 | 31.18 | 85.32 |
+| LiMR (TensorRT FP16) | **0.48** | **15.66** | **63.87** | 85.23 |
+| MMR | 1.64 | 106.32 | 9.41 | 84.73 |
+
+> TensorRT FP16 achieves **63.87 FPS** real-time inference with only 0.48 GB VRAM on edge devices.
+
+<img src="assets/print.png" alt="LiMR Framework" width="600" />
+
+<img src="assets/latency.png" alt="LiMR Framework" width="600" />
+
+
 
 ---
 
@@ -197,6 +273,12 @@ output_limr/aebad_s/
 ├── inference_speed.json           # Inference benchmark
 └── wandb/                         # W&B logs (if enabled)
 ```
+
+---
+
+# ⚡ TensorRT High-Speed Deployment
+
+After training, the ONNX model is auto-exported to `weights/onnx/model.onnx` under `--output-dir`. Use the [LiMR C++ TensorRT](https://github.com/ShowayLiao/LiMR_cpp) repository for high-speed inference.
 
 ---
 
