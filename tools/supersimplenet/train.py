@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""INP-Former 训练脚本：使用 INP-Former 模型进行异常检测模型的训练与评估。
+"""SuperSimpleNet 训练脚本：使用 SuperSimpleNet 模型进行异常检测模型的训练与评估。
 
 支持的数据集（通过注册表自动扩展）：
   - mvtec, mvtecad2, mvtec_loco, btech, bmad, mpdd, vad, visa, kolektor, folder
   - realiad, aebad_s, aebad_v
 
+注意：
+  - 推荐 batch_size=32、epochs=300 以获得最优效果。
+  - 骨干网络必须使用 torchvision V1 权重（.tv 结尾），默认 wide_resnet50_2.tv_in1k。
+  - 优化器为 AdamW（内部硬编码：adaptor lr=1e-4, segdec lr=2e-4 wd=1e-5）。
+  - 学习率调度：MultiStepLR，在 80% 和 90% epochs 处 ×0.4。
+
 用法示例:
   # MVTec-AD 单类别训练
-  python tools/inpformer/train.py --dataset mvtec --root ./datasets/MVTec --category bottle
+  python tools/supersimplenet/train.py --dataset mvtec --root ./datasets/MVTec --category bottle
 
   # VisA 训练
-  python tools/inpformer/train.py --dataset visa --root ./datasets/VisA --category candle
-
-  # RealIAD 训练
-  python tools/inpformer/train.py --dataset realiad --root ./datasets/Real-IAD --category end_cap --realiad-resolution 1024
-
-  # Folder 数据集训练
-  python tools/inpformer/train.py --dataset folder --root ./datasets/my_data --folder-normal-dir normal --folder-abnormal-dir abnormal
+  python tools/supersimplenet/train.py --dataset visa --root ./datasets/VisA --category capsules --epochs 300
 """
 
 import argparse
@@ -25,9 +25,7 @@ import json
 import time
 from pathlib import Path
 
-import numpy as np
 import torch
-from torchvision.transforms import v2
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
 from lightning.pytorch import seed_everything
 
@@ -39,7 +37,7 @@ from anomalib.data import (
 )
 from anomalib.engine import Engine
 from anomalib.metrics import AUPRO, AUROC, Evaluator
-from anomalib.models import INP_Former
+from anomalib.models import Supersimplenet
 
 try:
     import wandb
@@ -60,12 +58,8 @@ except ImportError:
 
 # ---------------------------------------------------------------------------
 # 数据集注册表
-#   key       : --dataset 命令行参数的值
-#   value[0]  : 数据集类
-#   value[1]  : 从 args 构建该类构造参数的函数，返回 dict
 # ---------------------------------------------------------------------------
 def _build_standard_dataset(args):
-    """适用于 root + category 模式的标准数据集（MVTecAD, Visa, BTech 等）。"""
     return {
         "root": args.root,
         "category": args.category,
@@ -121,14 +115,6 @@ def _build_aebad_s(args):
         "train_batch_size": args.train_batch_size,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
-        "train_augmentations": v2.Compose([
-            v2.RandomResizedCrop(
-                size=(224, 224),
-                scale=(0.7, 1.0),
-                interpolation=v2.InterpolationMode.BICUBIC,
-            ),
-            v2.RandomHorizontalFlip(p=0.5),
-        ]),
     }
 
 
@@ -141,14 +127,6 @@ def _build_aebad_v(args):
         "train_batch_size": args.train_batch_size,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
-        "train_augmentations": v2.Compose([
-            v2.RandomResizedCrop(
-                size=(224, 224),
-                scale=(0.7, 1.0),
-                interpolation=v2.InterpolationMode.BICUBIC,
-            ),
-            v2.RandomHorizontalFlip(p=0.5),
-        ]),
     }
 
 
@@ -172,7 +150,7 @@ DATASET_REGISTRY = {
 def parse_args() -> argparse.Namespace:
     """解析命令行参数。"""
     parser = argparse.ArgumentParser(
-        description=f"INP-Former 训练脚本。支持数据集: {', '.join(DATASET_REGISTRY)}",
+        description=f"SuperSimpleNet 训练脚本。支持数据集: {', '.join(DATASET_REGISTRY)}",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -186,11 +164,11 @@ def parse_args() -> argparse.Namespace:
                         help="数据集根目录")
     parser.add_argument("--category", type=str, default="bottle",
                         help="训练类别")
-    parser.add_argument("--image-size", type=int, default=448,
-                        help="输入图像尺寸")
-    parser.add_argument("--train-batch-size", type=int, default=16,
-                        help="训练批次大小")
-    parser.add_argument("--eval-batch-size", type=int, default=16,
+    parser.add_argument("--image-size", type=int, default=256,
+                        help="输入图像尺寸（SuperSimpleNet 默认 256）")
+    parser.add_argument("--train-batch-size", type=int, default=32,
+                        help="训练批次大小（推荐 32）")
+    parser.add_argument("--eval-batch-size", type=int, default=32,
                         help="评估批次大小")
     parser.add_argument("--num-workers", type=int, default=8,
                         help="数据加载线程数")
@@ -223,31 +201,24 @@ def parse_args() -> argparse.Namespace:
                         help="AeBAD_V 测试 domain shift")
 
     # ============================================================
-    # INP-Former 模型参数
+    # SuperSimpleNet 模型参数
     # ============================================================
-    parser.add_argument("--encoder-name", type=str, default="dinov2reg_vit_base_14",
-                        help="预训练编码器名称")
-    parser.add_argument("--inp-num", type=int, default=6,
-                        help="内在正常原型 (INP) 数量")
-    parser.add_argument("--decoder-depth", type=int, default=8,
-                        help="解码器 Transformer 层数")
-    parser.add_argument("--bottleneck-dropout", type=float, default=0.0,
-                        help="瓶颈层 Dropout 概率")
+    parser.add_argument("--perlin-threshold", type=float, default=0.2,
+                        help="Perlin 噪声二值化阈值（控制合成异常掩膜大小）")
+    parser.add_argument("--backbone", type=str, default="wide_resnet50_2.tv_in1k",
+                        help="特征提取骨干网络（必须使用 .tv 结尾的 V1 权重）")
+    parser.add_argument("--layers", type=str, nargs="+",
+                        default=["layer2", "layer3"],
+                        help="从骨干网络中提取特征的层名称")
+    parser.add_argument("--adapt-cls-features", action="store_true",
+                        help="分类头使用 adapter 后的特征（ICPR 版本为 True）")
 
     # ============================================================
     # 训练参数
     # ============================================================
-    parser.add_argument("--max-steps", type=int, default=5000,
-                        help="最大训练步数")
-    parser.add_argument("--epochs", type=int, default=None,
-                        help="最大训练轮数（设置后将覆盖 max-steps）")
-    parser.add_argument("--lr", type=float, default=1e-3,
-                        help="初始学习率")
-    parser.add_argument("--weight-decay", type=float, default=1e-4,
-                        help="权重衰减")
-    parser.add_argument("--warmup-iters", type=int, default=100,
-                        help="学习率预热迭代数")
-    parser.add_argument("--early-stop-patience", type=int, default=20,
+    parser.add_argument("--epochs", type=int, default=300,
+                        help="最大训练轮数（推荐 300）")
+    parser.add_argument("--early-stop-patience", type=int, default=10,
                         help="早停耐心值")
     parser.add_argument("--seed", type=int, default=42,
                         help="随机种子")
@@ -255,9 +226,9 @@ def parse_args() -> argparse.Namespace:
     # ============================================================
     # 输出参数
     # ============================================================
-    parser.add_argument("--output-dir", type=str, default="./output_inpformer",
+    parser.add_argument("--output-dir", type=str, default="./output_supersimplenet",
                         help="输出目录")
-    parser.add_argument("--project-name", type=str, default="INP-Former_Anomalib",
+    parser.add_argument("--project-name", type=str, default="SuperSimpleNet",
                         help="WandB 项目名称")
     parser.add_argument("--run-name", type=str, default=None,
                         help="WandB 运行名称（默认自动生成）")
@@ -273,48 +244,36 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_model(args: argparse.Namespace, evaluator) -> INP_Former:
-    """构建 INP-Former 模型。
+def build_model(args: argparse.Namespace, evaluator) -> Supersimplenet:
+    """构建 SuperSimpleNet 模型。
 
     Args:
         args: 命令行参数。
         evaluator: 评估器实例。
 
     Returns:
-        INP_Former 模型实例。
+        Supersimplenet 模型实例。
+
+    Note:
+        优化器参数（lr, weight_decay）由模型内部硬编码：adaptor lr=1e-4, segdec lr=2e-4 wd=1e-5。
     """
-    return INP_Former(
-        encoder_name=args.encoder_name,
-        inp_num=args.inp_num,
-        bottleneck_dropout=args.bottleneck_dropout,
-        decoder_depth=args.decoder_depth,
+    return Supersimplenet(
+        perlin_threshold=args.perlin_threshold,
+        backbone=args.backbone,
+        layers=list(args.layers),
+        adapt_cls_features=args.adapt_cls_features,
         evaluator=evaluator,
     )
 
 
 def measure_inference_speed(
-    model: INP_Former,
+    model: Supersimplenet,
     datamodule,
     device: str = "cuda",
     warmup: int = 10,
     iterations: int = 100,
 ) -> dict:
-    """测量模型推理速度。
-
-    提供两种延迟指标:
-      - 总体延迟 (end-to-end) : 包含数据传输 + 模型推理
-      - 纯推理时间 (pure)     : 仅模型推理，不含传输
-
-    Args:
-        model:  已训练的模型。
-        datamodule: 数据模块。
-        device: 设备类型 ("cuda" 或 "cpu")。
-        warmup: 预热迭代次数。
-        iterations: 测量迭代次数。
-
-    Returns:
-        包含速度测量结果的字典。
-    """
+    """测量模型推理速度。"""
     print("\n" + "=" * 80)
     print("推理速度测量")
     print("=" * 80)
@@ -362,20 +321,17 @@ def measure_inference_speed(
             total_images += batch_size
 
             if use_cuda:
-                # GPU 高精度计时（cuda.Event）
                 e0 = torch.cuda.Event(enable_timing=True)
                 e1 = torch.cuda.Event(enable_timing=True)
                 e2 = torch.cuda.Event(enable_timing=True)
                 e3 = torch.cuda.Event(enable_timing=True)
 
-                # 总体延迟：数据传输 + 推理
                 e0.record()
                 images = batch["image"].to(device)
                 _ = model(images)
                 e1.record()
                 torch.cuda.synchronize()
 
-                # 纯推理：重新传输后仅推理
                 images = batch["image"].to(device)
                 e2.record()
                 _ = model(images)
@@ -386,7 +342,6 @@ def measure_inference_speed(
                 iter_pure = e2.elapsed_time(e3) / 1000.0
                 del e0, e1, e2, e3
             else:
-                # CPU 计时
                 t0 = time.perf_counter()
                 images = batch["image"].to(device)
                 _ = model(images)
@@ -412,7 +367,6 @@ def measure_inference_speed(
     if use_cuda:
         torch.cuda.empty_cache()
 
-    # ---- 汇总 ----
     avg_e2e_per_img = total_time_e2e / total_images * 1000
     avg_pure_per_img = total_time_pure / total_images * 1000
     fps_e2e = total_images / total_time_e2e
@@ -424,7 +378,7 @@ def measure_inference_speed(
     print(f"设备: {device}")
     print(f"总图像: {total_images}")
     print()
-    print("【总体延迟（含数据传-推理）】")
+    print("【总体延迟（含数据传输+推理）】")
     print(f"  平均每张: {avg_e2e_per_img:.2f} ms")
     print(f"  吞吐量: {fps_e2e:.2f} FPS")
     print()
@@ -462,7 +416,7 @@ def main():
 
     # ---- 打印配置 ----
     print("=" * 80)
-    print(f"INP-Former 训练 - 数据集: {args.dataset}")
+    print(f"SuperSimpleNet 训练 - 数据集: {args.dataset}")
     print("=" * 80)
     for key, val in sorted(vars(args).items()):
         print(f"  {key}: {val}")
@@ -479,14 +433,14 @@ def main():
 
     # ---- 构建模型 ----
     print("=" * 80)
-    print("构建 INP-Former 模型")
+    print("构建 SuperSimpleNet 模型")
     print("=" * 80)
     model = build_model(args, evaluator)
 
     # ---- 日志 ----
     run_name = args.run_name
     if run_name is None:
-        run_name = f"INP-Former_{args.encoder_name}_{args.dataset}_{args.category}"
+        run_name = f"SuperSimpleNet_{args.dataset}_{args.category}"
 
     logger = None
     if WANDB_AVAILABLE:
@@ -510,17 +464,12 @@ def main():
     ]
 
     # ---- 训练引擎 ----
-    trainer_kwargs = {
-        "default_root_dir": output_dir,
-        "logger": logger,
-        "callbacks": callbacks,
-    }
-    if args.epochs is not None:
-        trainer_kwargs["max_epochs"] = args.epochs
-    else:
-        trainer_kwargs["max_steps"] = args.max_steps
-
-    engine = Engine(**trainer_kwargs)
+    engine = Engine(
+        default_root_dir=output_dir,
+        logger=logger,
+        callbacks=callbacks,
+        max_epochs=args.epochs,
+    )
 
     # ---- 训练 ----
     print("=" * 80)
@@ -534,7 +483,6 @@ def main():
     print("=" * 80)
 
     if args.dataset in ("aebad_s", "aebad_v"):
-        # AeBAD 多 domain-shift 测试
         if args.dataset == "aebad_s":
             good_test_dir = Path(args.root) / "test" / "good"
             domain_shifts = sorted(

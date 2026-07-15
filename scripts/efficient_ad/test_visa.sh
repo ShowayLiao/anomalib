@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+cd "$(dirname "$0")/../.."
+source .venv/bin/activate
+CKPT="./output_efficient_ad/visa_capsules/EfficientAD/Visa/capsules/v1/weights/lightning/model.ckpt"
+
+python tools/efficient_ad/test.py \
+    --dataset visa \
+    --root ./datasets/visa \
+    --category capsules \
+    --image-size 256 \
+    --eval-batch-size 16 \
+    --model-size s \
+    --checkpoint "$CKPT" \
+    --output-dir ./output_efficient_ad/visa_capsules/test

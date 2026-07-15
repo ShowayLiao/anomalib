@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-"""INP-Former 训练脚本：使用 INP-Former 模型进行异常检测模型的训练与评估。
+"""EfficientAD 训练脚本：使用 EfficientAD 模型进行异常检测模型的训练与评估。
 
 支持的数据集（通过注册表自动扩展）：
   - mvtec, mvtecad2, mvtec_loco, btech, bmad, mpdd, vad, visa, kolektor, folder
   - realiad, aebad_s, aebad_v
 
+注意：
+  - EfficientAD 要求 train_batch_size == 1，脚本会自动校验。
+  - 训练需要 ImageNette 数据集（默认 ./datasets/imagenette），用于 loss 正则化。
+  - 预处理 transform 中禁止 Normalize，ImageNet 归一化在模型 forward 中内置。
+
 用法示例:
   # MVTec-AD 单类别训练
-  python tools/inpformer/train.py --dataset mvtec --root ./datasets/MVTec --category bottle
+  python tools/efficient_ad/train.py --dataset mvtec --root ./datasets/MVTec --category bottle
 
   # VisA 训练
-  python tools/inpformer/train.py --dataset visa --root ./datasets/VisA --category candle
+  python tools/efficient_ad/train.py --dataset visa --root ./datasets/VisA --category capsules
 
   # RealIAD 训练
-  python tools/inpformer/train.py --dataset realiad --root ./datasets/Real-IAD --category end_cap --realiad-resolution 1024
-
-  # Folder 数据集训练
-  python tools/inpformer/train.py --dataset folder --root ./datasets/my_data --folder-normal-dir normal --folder-abnormal-dir abnormal
+  python tools/efficient_ad/train.py --dataset realiad --root ./datasets/Real-IAD --category end_cap --realiad-resolution 256
 """
 
 import argparse
@@ -25,9 +27,7 @@ import json
 import time
 from pathlib import Path
 
-import numpy as np
 import torch
-from torchvision.transforms import v2
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
 from lightning.pytorch import seed_everything
 
@@ -39,7 +39,7 @@ from anomalib.data import (
 )
 from anomalib.engine import Engine
 from anomalib.metrics import AUPRO, AUROC, Evaluator
-from anomalib.models import INP_Former
+from anomalib.models import EfficientAd
 
 try:
     import wandb
@@ -60,17 +60,13 @@ except ImportError:
 
 # ---------------------------------------------------------------------------
 # 数据集注册表
-#   key       : --dataset 命令行参数的值
-#   value[0]  : 数据集类
-#   value[1]  : 从 args 构建该类构造参数的函数，返回 dict
 # ---------------------------------------------------------------------------
 def _build_standard_dataset(args):
-    """适用于 root + category 模式的标准数据集（MVTecAD, Visa, BTech 等）。"""
     return {
         "root": args.root,
         "category": args.category,
         "image_size": (args.image_size, args.image_size),
-        "train_batch_size": args.train_batch_size,
+        "train_batch_size": 1,       # EfficientAD 强制 batch_size=1
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
     }
@@ -82,7 +78,7 @@ def _build_realiad(args):
         "category": args.category,
         "resolution": args.realiad_resolution,
         "json_path": args.realiad_json,
-        "train_batch_size": args.train_batch_size,
+        "train_batch_size": 1,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
         "test_split_mode": args.realiad_test_split_mode,
@@ -92,7 +88,7 @@ def _build_realiad(args):
 def _build_kolektor(args):
     return {
         "root": args.root,
-        "train_batch_size": args.train_batch_size,
+        "train_batch_size": 1,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
     }
@@ -105,7 +101,7 @@ def _build_folder(args):
         "normal_test_dir": args.folder_normal_test_dir,
         "abnormal_dir": args.folder_abnormal_dir,
         "mask_dir": args.folder_mask_dir,
-        "train_batch_size": args.train_batch_size,
+        "train_batch_size": 1,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
         "name": args.category or "folder_dataset",
@@ -118,17 +114,9 @@ def _build_aebad_s(args):
         "category": args.category,
         "domain_shift": args.aebad_s_domain_shift,
         "image_size": (args.image_size, args.image_size),
-        "train_batch_size": args.train_batch_size,
+        "train_batch_size": 1,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
-        "train_augmentations": v2.Compose([
-            v2.RandomResizedCrop(
-                size=(224, 224),
-                scale=(0.7, 1.0),
-                interpolation=v2.InterpolationMode.BICUBIC,
-            ),
-            v2.RandomHorizontalFlip(p=0.5),
-        ]),
     }
 
 
@@ -138,17 +126,9 @@ def _build_aebad_v(args):
         "category": args.category,
         "domain_shift": args.aebad_v_domain_shift,
         "image_size": (args.image_size, args.image_size),
-        "train_batch_size": args.train_batch_size,
+        "train_batch_size": 1,
         "eval_batch_size": args.eval_batch_size,
         "num_workers": args.num_workers,
-        "train_augmentations": v2.Compose([
-            v2.RandomResizedCrop(
-                size=(224, 224),
-                scale=(0.7, 1.0),
-                interpolation=v2.InterpolationMode.BICUBIC,
-            ),
-            v2.RandomHorizontalFlip(p=0.5),
-        ]),
     }
 
 
@@ -172,7 +152,7 @@ DATASET_REGISTRY = {
 def parse_args() -> argparse.Namespace:
     """解析命令行参数。"""
     parser = argparse.ArgumentParser(
-        description=f"INP-Former 训练脚本。支持数据集: {', '.join(DATASET_REGISTRY)}",
+        description=f"EfficientAD 训练脚本。支持数据集: {', '.join(DATASET_REGISTRY)}",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -186,10 +166,8 @@ def parse_args() -> argparse.Namespace:
                         help="数据集根目录")
     parser.add_argument("--category", type=str, default="bottle",
                         help="训练类别")
-    parser.add_argument("--image-size", type=int, default=448,
-                        help="输入图像尺寸")
-    parser.add_argument("--train-batch-size", type=int, default=16,
-                        help="训练批次大小")
+    parser.add_argument("--image-size", type=int, default=256,
+                        help="输入图像尺寸（EfficientAD 默认 256）")
     parser.add_argument("--eval-batch-size", type=int, default=16,
                         help="评估批次大小")
     parser.add_argument("--num-workers", type=int, default=8,
@@ -223,31 +201,30 @@ def parse_args() -> argparse.Namespace:
                         help="AeBAD_V 测试 domain shift")
 
     # ============================================================
-    # INP-Former 模型参数
+    # EfficientAD 模型参数
     # ============================================================
-    parser.add_argument("--encoder-name", type=str, default="dinov2reg_vit_base_14",
-                        help="预训练编码器名称")
-    parser.add_argument("--inp-num", type=int, default=6,
-                        help="内在正常原型 (INP) 数量")
-    parser.add_argument("--decoder-depth", type=int, default=8,
-                        help="解码器 Transformer 层数")
-    parser.add_argument("--bottleneck-dropout", type=float, default=0.0,
-                        help="瓶颈层 Dropout 概率")
+    parser.add_argument("--model-size", type=str, default="s",
+                        choices=["s", "small", "m", "medium"],
+                        help="模型大小 (s=small, m=medium)")
+    parser.add_argument("--teacher-out-channels", type=int, default=384,
+                        help="teacher/student 输出通道数")
+    parser.add_argument("--padding", action="store_true",
+                        help="卷积层是否使用 padding")
+    parser.add_argument("--no-pad-maps", action="store_true",
+                        help="padding=False 时禁用 anomaly map 的 4px zero-padding")
+    parser.add_argument("--imagenet-dir", type=str, default="./datasets/imagenette",
+                        help="ImageNette 数据集路径（用于训练 loss 正则化）")
 
     # ============================================================
     # 训练参数
     # ============================================================
-    parser.add_argument("--max-steps", type=int, default=5000,
-                        help="最大训练步数")
-    parser.add_argument("--epochs", type=int, default=None,
-                        help="最大训练轮数（设置后将覆盖 max-steps）")
-    parser.add_argument("--lr", type=float, default=1e-3,
-                        help="初始学习率")
-    parser.add_argument("--weight-decay", type=float, default=1e-4,
-                        help="权重衰减")
-    parser.add_argument("--warmup-iters", type=int, default=100,
-                        help="学习率预热迭代数")
-    parser.add_argument("--early-stop-patience", type=int, default=20,
+    parser.add_argument("--epochs", type=int, default=200,
+                        help="最大训练轮数")
+    parser.add_argument("--lr", type=float, default=1e-4,
+                        help="Adam 优化器学习率")
+    parser.add_argument("--weight-decay", type=float, default=1e-5,
+                        help="Adam 优化器权重衰减")
+    parser.add_argument("--early-stop-patience", type=int, default=10,
                         help="早停耐心值")
     parser.add_argument("--seed", type=int, default=42,
                         help="随机种子")
@@ -255,9 +232,9 @@ def parse_args() -> argparse.Namespace:
     # ============================================================
     # 输出参数
     # ============================================================
-    parser.add_argument("--output-dir", type=str, default="./output_inpformer",
+    parser.add_argument("--output-dir", type=str, default="./output_efficient_ad",
                         help="输出目录")
-    parser.add_argument("--project-name", type=str, default="INP-Former_Anomalib",
+    parser.add_argument("--project-name", type=str, default="EfficientAD",
                         help="WandB 项目名称")
     parser.add_argument("--run-name", type=str, default=None,
                         help="WandB 运行名称（默认自动生成）")
@@ -273,48 +250,43 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_model(args: argparse.Namespace, evaluator) -> INP_Former:
-    """构建 INP-Former 模型。
+def build_model(args: argparse.Namespace, evaluator) -> EfficientAd:
+    """构建 EfficientAD 模型。
 
     Args:
         args: 命令行参数。
         evaluator: 评估器实例。
 
     Returns:
-        INP_Former 模型实例。
+        EfficientAd 模型实例。
     """
-    return INP_Former(
-        encoder_name=args.encoder_name,
-        inp_num=args.inp_num,
-        bottleneck_dropout=args.bottleneck_dropout,
-        decoder_depth=args.decoder_depth,
+    # 统一 model_size 格式
+    model_size = args.model_size.lower()
+    if model_size in ("s", "small"):
+        model_size = "s"
+    else:
+        model_size = "m"
+
+    return EfficientAd(
+        imagenet_dir=args.imagenet_dir,
+        model_size=model_size,
+        teacher_out_channels=args.teacher_out_channels,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        padding=args.padding,
+        pad_maps=not args.no_pad_maps,
         evaluator=evaluator,
     )
 
 
 def measure_inference_speed(
-    model: INP_Former,
+    model: EfficientAd,
     datamodule,
     device: str = "cuda",
     warmup: int = 10,
     iterations: int = 100,
 ) -> dict:
-    """测量模型推理速度。
-
-    提供两种延迟指标:
-      - 总体延迟 (end-to-end) : 包含数据传输 + 模型推理
-      - 纯推理时间 (pure)     : 仅模型推理，不含传输
-
-    Args:
-        model:  已训练的模型。
-        datamodule: 数据模块。
-        device: 设备类型 ("cuda" 或 "cpu")。
-        warmup: 预热迭代次数。
-        iterations: 测量迭代次数。
-
-    Returns:
-        包含速度测量结果的字典。
-    """
+    """测量模型推理速度。"""
     print("\n" + "=" * 80)
     print("推理速度测量")
     print("=" * 80)
@@ -362,20 +334,17 @@ def measure_inference_speed(
             total_images += batch_size
 
             if use_cuda:
-                # GPU 高精度计时（cuda.Event）
                 e0 = torch.cuda.Event(enable_timing=True)
                 e1 = torch.cuda.Event(enable_timing=True)
                 e2 = torch.cuda.Event(enable_timing=True)
                 e3 = torch.cuda.Event(enable_timing=True)
 
-                # 总体延迟：数据传输 + 推理
                 e0.record()
                 images = batch["image"].to(device)
                 _ = model(images)
                 e1.record()
                 torch.cuda.synchronize()
 
-                # 纯推理：重新传输后仅推理
                 images = batch["image"].to(device)
                 e2.record()
                 _ = model(images)
@@ -386,7 +355,6 @@ def measure_inference_speed(
                 iter_pure = e2.elapsed_time(e3) / 1000.0
                 del e0, e1, e2, e3
             else:
-                # CPU 计时
                 t0 = time.perf_counter()
                 images = batch["image"].to(device)
                 _ = model(images)
@@ -412,7 +380,6 @@ def measure_inference_speed(
     if use_cuda:
         torch.cuda.empty_cache()
 
-    # ---- 汇总 ----
     avg_e2e_per_img = total_time_e2e / total_images * 1000
     avg_pure_per_img = total_time_pure / total_images * 1000
     fps_e2e = total_images / total_time_e2e
@@ -424,7 +391,7 @@ def measure_inference_speed(
     print(f"设备: {device}")
     print(f"总图像: {total_images}")
     print()
-    print("【总体延迟（含数据传-推理）】")
+    print("【总体延迟（含数据传输+推理）】")
     print(f"  平均每张: {avg_e2e_per_img:.2f} ms")
     print(f"  吞吐量: {fps_e2e:.2f} FPS")
     print()
@@ -462,7 +429,7 @@ def main():
 
     # ---- 打印配置 ----
     print("=" * 80)
-    print(f"INP-Former 训练 - 数据集: {args.dataset}")
+    print(f"EfficientAD 训练 - 数据集: {args.dataset}")
     print("=" * 80)
     for key, val in sorted(vars(args).items()):
         print(f"  {key}: {val}")
@@ -479,14 +446,14 @@ def main():
 
     # ---- 构建模型 ----
     print("=" * 80)
-    print("构建 INP-Former 模型")
+    print("构建 EfficientAD 模型")
     print("=" * 80)
     model = build_model(args, evaluator)
 
     # ---- 日志 ----
     run_name = args.run_name
     if run_name is None:
-        run_name = f"INP-Former_{args.encoder_name}_{args.dataset}_{args.category}"
+        run_name = f"EfficientAD_{args.model_size}_{args.dataset}_{args.category}"
 
     logger = None
     if WANDB_AVAILABLE:
@@ -510,17 +477,12 @@ def main():
     ]
 
     # ---- 训练引擎 ----
-    trainer_kwargs = {
-        "default_root_dir": output_dir,
-        "logger": logger,
-        "callbacks": callbacks,
-    }
-    if args.epochs is not None:
-        trainer_kwargs["max_epochs"] = args.epochs
-    else:
-        trainer_kwargs["max_steps"] = args.max_steps
-
-    engine = Engine(**trainer_kwargs)
+    engine = Engine(
+        default_root_dir=output_dir,
+        logger=logger,
+        callbacks=callbacks,
+        max_epochs=args.epochs,
+    )
 
     # ---- 训练 ----
     print("=" * 80)
@@ -534,7 +496,6 @@ def main():
     print("=" * 80)
 
     if args.dataset in ("aebad_s", "aebad_v"):
-        # AeBAD 多 domain-shift 测试
         if args.dataset == "aebad_s":
             good_test_dir = Path(args.root) / "test" / "good"
             domain_shifts = sorted(
