@@ -6,31 +6,22 @@ for %%c in (material1 material2 material3 material4) do (
     echo ============================================================
     echo Training: %%c
     echo ============================================================
-    python tools\limr\train.py ^
+    python tools\efficient_ad\train.py ^
         --dataset mvtec ^
         --root ../datasets/material ^
         --category %%c ^
-        --image-size 224 ^
-        --train-batch-size 16 ^
+        --image-size 256 ^
         --eval-batch-size 16 ^
-        --num-workers 6 ^
-        --backbone resnet34 ^
-        --alpha 1.75 ^
-        --mask-ratio 0.4 ^
-        --test-mask-ratio 0.0 ^
-        --fpn-output-dim 64 128 256 512 ^
-        --block-dropout 0.0 ^
-        --block-ffn-dropout 0.0 ^
-        --block-attn-dropout 0.0 ^
-        --frozen-stages 3 ^
+        --num-workers 8 ^
+        --model-size s ^
+        --imagenet-dir ./datasets/imagenette ^
         --epochs 200 ^
-        --lr 0.001 ^
-        --weight-decay 0.05 ^
-        --warmup-epochs 15 ^
+        --lr 1e-4 ^
+        --weight-decay 1e-5 ^
         --early-stop-patience 10 ^
-        --seed 54 ^
-        --output-dir ./output_limr/material/%%c ^
-        --project-name LiMR
+        --seed 42 ^
+        --output-dir ./output_efficient_ad/material/%%c ^
+        --project-name EfficientAD
     echo.
 )
 

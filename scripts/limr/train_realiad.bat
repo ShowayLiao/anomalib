@@ -5,13 +5,13 @@ python tools\limr\train.py ^
     --dataset realiad ^
     --root i:\exp\datasets\Real-IAD ^
     --category end_cap ^
-    --realiad-resolution 1024 ^
+    --realiad-resolution 256 ^
     --realiad-json realiad_jsons/realiad_jsons_fuiad_0.0/end_cap.json ^
-    --image-size 1024 ^
+    --image-size 256 ^
     --train-batch-size 8 ^
     --eval-batch-size 8 ^
     --num-workers 6 ^
-    --backbone resnet50 ^
+    --backbone resnet34 ^
     --alpha 1.75 ^
     --mask-ratio 0.4 ^
     --test-mask-ratio 0.0 ^

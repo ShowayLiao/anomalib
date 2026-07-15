@@ -9,7 +9,7 @@ python tools\limr\train.py ^
     --train-batch-size 16 ^
     --eval-batch-size 16 ^
     --num-workers 6 ^
-    --backbone resnet50 ^
+    --backbone resnet34 ^
     --alpha 1.75 ^
     --mask-ratio 0.4 ^
     --test-mask-ratio 0.0 ^
