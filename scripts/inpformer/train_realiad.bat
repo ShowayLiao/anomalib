@@ -5,9 +5,9 @@ python tools\inpformer\train.py ^
     --dataset realiad ^
     --root i:\exp\datasets\Real-IAD ^
     --category end_cap ^
-    --realiad-resolution 1024 ^
+    --realiad-resolution 448 ^
     --realiad-json realiad_jsons/realiad_jsons_fuiad_0.0/end_cap.json ^
-    --image-size 1024 ^
+    --image-size 448 ^
     --train-batch-size 8 ^
     --eval-batch-size 8 ^
     --num-workers 8 ^
@@ -20,7 +20,7 @@ python tools\inpformer\train.py ^
     --weight-decay 1e-4 ^
     --warmup-iters 100 ^
     --early-stop-patience 20 ^
-    --seed 42 ^
+    --seed 1 ^
     --output-dir ./output_inpformer/realiad_end_cap ^
     --project-name INP-Former_Anomalib
 pause

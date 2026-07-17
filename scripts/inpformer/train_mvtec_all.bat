@@ -24,7 +24,7 @@ for %%c in (%CATEGORIES%) do (
         --weight-decay 1e-4 ^
         --warmup-iters 100 ^
         --early-stop-patience 20 ^
-        --seed 42 ^
+        --seed 1 ^
         --output-dir ./output_inpformer/mvtec_%%c ^
         --project-name INP-Former_Anomalib
 )

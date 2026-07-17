@@ -23,7 +23,7 @@ for %%c in (material1 material2 material3 material4) do (
         --weight-decay 1e-4 ^
         --warmup-iters 100 ^
         --early-stop-patience 20 ^
-        --seed 42 ^
+        --seed 1 ^
         --output-dir ./output_inpformer/material/%%c ^
         --project-name INP-Former_Anomalib
     echo.

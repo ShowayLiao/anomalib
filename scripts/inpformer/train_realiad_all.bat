@@ -12,11 +12,11 @@ for %%c in (%CATEGORIES%) do (
         --dataset realiad ^
         --root i:\exp\datasets\Real-IAD ^
         --category %%c ^
-        --realiad-resolution 256 ^
+        --realiad-resolution 448 ^
         --realiad-json realiad_jsons/realiad_jsons_fuiad_0.0/{category}.json ^
-        --image-size 256 ^
-        --train-batch-size 8 ^
-        --eval-batch-size 8 ^
+        --image-size 448 ^
+        --train-batch-size 16 ^
+        --eval-batch-size 16 ^
         --num-workers 8 ^
         --encoder-name dinov2reg_vit_base_14 ^
         --inp-num 6 ^
@@ -27,7 +27,7 @@ for %%c in (%CATEGORIES%) do (
         --weight-decay 1e-4 ^
         --warmup-iters 100 ^
         --early-stop-patience 20 ^
-        --seed 42 ^
+        --seed 1 ^
         --output-dir ./output_inpformer/realiad_%%c ^
         --project-name INP-Former_Anomalib
 )

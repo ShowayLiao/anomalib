@@ -39,7 +39,7 @@ TRAINING_CONFIG: dict[str, Any] = {
         "betas": (0.9, 0.999),
         "weight_decay": 1e-4,
         "amsgrad": True,
-        "eps": 1e-8,
+        "eps": 1e-10,
     },
     "scheduler": {
         "base_value": 1e-3,
