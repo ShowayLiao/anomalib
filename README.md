@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="">📄 Paper</a> &nbsp;|&nbsp;
+  <a href="https://ieeexplore.ieee.org/document/11606365">📄 Paper</a> &nbsp;|&nbsp;
   <a href="https://github.com/ShowayLiao/LiMR_cpp">⚡ C++ Implementation</a>
 </p>
 
@@ -17,7 +17,7 @@
 [![lightning](https://img.shields.io/badge/lightning-2.2%2B-blue)]()
 [![anomalib](https://img.shields.io/badge/anomalib-v2.3-green)]()
 
-<img src="assets/framework.png" alt="LiMR Framework" width="600" />
+<img src="./assets/framework.png" alt="LiMR Framework" width="600" />
 
 
 
@@ -72,7 +72,7 @@ LiMR achieves **state-of-the-art** performance on AeBAD-S while drastically redu
 
 > Compared to MMR: **76.6% fewer params**, **45.1% lower FLOPs**, **45.5% higher throughput**, while surpassing MMR in both AUROC and PRO.
 
-<img src="assets/aebad-s.png" alt="LiMR Framework" width="600" />
+<img src="./assets/aebad-s.png" alt="LiMR Framework" width="600" />
 
 ## MVTec AD
 
@@ -88,7 +88,7 @@ LiMR maintains competitive accuracy on the standard MVTec AD benchmark.
 
 > LiMR achieves comparable accuracy to SOTA methods while using a lightweight CNN-ViT hybrid architecture — ideal for resource-constrained deployment.
 
-<img src="assets/mvtec.png" alt="LiMR Framework" width="600" />
+<img src="./assets/mvtec.png" alt="LiMR Framework" width="600" />
 
 ## Jetson AGX Xavier Edge Deployment
 
@@ -101,9 +101,9 @@ LiMR maintains competitive accuracy on the standard MVTec AD benchmark.
 
 > TensorRT FP16 achieves **63.87 FPS** real-time inference with only 0.48 GB VRAM on edge devices.
 
-<img src="assets/print.png" alt="LiMR Framework" width="600" />
+<img src="./assets/print.png" alt="LiMR Framework" width="600" />
 
-<img src="assets/latency.png" alt="LiMR Framework" width="600" />
+<img src="./assets/latency.png" alt="LiMR Framework" width="600" />
 
 
 
